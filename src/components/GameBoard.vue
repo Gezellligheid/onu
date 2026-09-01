@@ -276,7 +276,14 @@ async function onPass() {
   }
 }
 
-const showUnoButton = computed(() => myHand.value.length <= 2 && myHand.value.length >= 1 && !game.value.unoCalled[uid.value])
+// Strict rule: only callable in the exact moment you're about to play your
+// second-to-last card — on your turn, holding exactly 2, with a legal play.
+const showUnoButton = computed(() => {
+  if (game.value.unoCalled[uid.value]) return false
+  if (myHand.value.length !== 2) return false
+  if (!myTurn.value) return false
+  return myHand.value.some((c) => engine.isPlayableNow(c, game.value))
+})
 async function onCallUno() {
   unlockAudio()
   try {

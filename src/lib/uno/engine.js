@@ -364,10 +364,16 @@ export function callUno(state, uid) {
   if (next.status !== 'playing') throw new Error('Round is not active.')
   const hand = next.hands[uid]
   if (!hand) throw new Error('Unknown player.')
-  // Only valid once you're down to your last one or two cards — otherwise a
-  // stale/racing client could call it while sitting on a full hand and stay
-  // protected from being caught once they actually reach one card.
-  if (hand.length > 2) throw new Error('You can only call UNO when you have 1 or 2 cards left.')
+  // Strict rule: you may only call UNO in the moment you're about to play
+  // your second-to-last card — i.e. it's your turn, you're holding exactly
+  // two cards, and at least one of them is actually legal to play right
+  // now. Once you've played it (down to one card) this can't be called
+  // retroactively; the call itself is what needs to happen at that moment.
+  if (actionableUid(next) !== uid) throw new Error('You can only call UNO on your turn.')
+  if (hand.length !== 2) throw new Error('You can only call UNO right before playing your second-to-last card.')
+  if (!hand.some((c) => isPlayableNow(c, next))) {
+    throw new Error('You need a legal play to call UNO.')
+  }
   next.unoCalled[uid] = true
   next.lastAction = { type: 'uno-call', by: uid, message: `${nameFor(next, uid)} called UNO!` }
   next.updatedAt = Date.now()
