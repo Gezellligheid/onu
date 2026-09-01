@@ -56,6 +56,10 @@ export default {
           '60%': { opacity: '1' },
           '100%': { transform: 'translateY(0) scale(1)', opacity: '1' },
         },
+        'chase': {
+          '0%, 100%': { opacity: '0.15', transform: 'scale(0.8)' },
+          '50%': { opacity: '1', transform: 'scale(1.15)' },
+        },
       },
       animation: {
         'deal-in': 'deal-in 0.35s ease-out',

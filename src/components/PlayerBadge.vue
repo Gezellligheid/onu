@@ -1,9 +1,10 @@
 <script setup>
+import { computed } from 'vue'
 import CardFan from './CardFan.vue'
 
-defineProps({
+const props = defineProps({
   name: { type: String, required: true },
-  cardCount: { type: Number, required: true },
+  cards: { type: Array, required: true },
   isTurn: { type: Boolean, default: false },
   score: { type: Number, default: 0 },
   vulnerable: { type: Boolean, default: false }, // 1 card, hasn't called UNO
@@ -11,6 +12,8 @@ defineProps({
   waitingOn: { type: Boolean, default: false }, // must respond to a pending draw stack
 })
 defineEmits(['catch'])
+
+const cardCount = computed(() => props.cards.length)
 
 function initials(n) {
   return n
@@ -24,7 +27,7 @@ function initials(n) {
 
 <template>
   <div class="flex flex-col items-center gap-0.5">
-    <CardFan :count="cardCount" />
+    <CardFan :cards="cards" />
     <div class="relative">
       <div
         class="flex h-12 w-12 items-center justify-center rounded-full border-2 font-display text-sm font-bold transition"

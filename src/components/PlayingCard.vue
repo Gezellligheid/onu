@@ -67,7 +67,7 @@ const altText = computed(() => {
       bgClass,
       enterAnim[animateIn],
       playable && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
-      disabled ? 'opacity-50' : '',
+      disabled ? 'brightness-[0.45] saturate-[0.7]' : '',
       urgent ? 'animate-stack-pulse border-uno-red' : glow ? 'animate-ring-pulse border-uno-yellow' : '',
     ]"
   >

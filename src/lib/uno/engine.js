@@ -279,13 +279,17 @@ function finishRound(state, winnerId) {
 }
 
 /**
- * Draws for `uid`. Two distinct modes:
- *  - A pending +2/+4 stack: draws the whole accumulated total at once and
- *    the turn passes immediately (no choice to play — the stack already
- *    gave them the chance to counter it).
- *  - A normal turn with no playable card: house rule — keep drawing, one
- *    card at a time, until a playable card turns up (deck is unlimited, so
- *    this always terminates). The final card may then be played or kept.
+ * Draws exactly one card for `uid` — every forced or optional draw takes its
+ * own call, so a player (or the AFK auto-player) clicks/acts once per card.
+ * Two distinct situations:
+ *  - A pending +2/+4 stack: this card counts against the total. Once the
+ *    whole total has been drawn the stack clears and the turn passes; until
+ *    then it's still their turn and they must draw again (no choice to play
+ *    — the stack already gave them the chance to counter it).
+ *  - A normal turn with no playable card: house rule — drawing doesn't pass
+ *    your turn. If the card you drew isn't playable either, it's still your
+ *    turn and you must draw again; once you draw something playable you may
+ *    play it or keep it (the deck is unlimited, so this always terminates).
  */
 export function drawCard(state, uid) {
   const next = clone(state)
@@ -294,48 +298,40 @@ export function drawCard(state, uid) {
   if (currentPlayerId(next) !== uid) throw new Error('It is not your turn.')
   if (next.awaitingDrawDecision) throw new Error('Resolve your drawn card first.')
 
+  const card = drawOne(next)
+  next.hands[uid].push(card)
+
   if (next.pendingDraw) {
-    const { count, type } = next.pendingDraw
-    const drawn = []
-    for (let i = 0; i < count; i += 1) drawn.push(drawOne(next))
-    next.hands[uid].push(...drawn)
-    next.pendingDraw = null
-    next.lastDraw = { id: Date.now(), by: uid, cardIds: drawn.map((c) => c.id), forced: true }
-    stepIndex(next, 1)
-    next.lastAction = {
-      type: 'forced-draw',
-      by: uid,
-      message: `${nameFor(next, uid)} draws ${count} (${type === 'wild4' ? 'Wild +4' : '+2'} stack) and is skipped.`,
+    const { type } = next.pendingDraw
+    const remaining = next.pendingDraw.count - 1
+    next.lastDraw = { id: Date.now(), by: uid, cardIds: [card.id], forced: true }
+    if (remaining <= 0) {
+      next.pendingDraw = null
+      stepIndex(next, 1)
+      next.lastAction = {
+        type: 'forced-draw',
+        by: uid,
+        message: `${nameFor(next, uid)} finishes drawing the ${type === 'wild4' ? 'Wild +4' : '+2'} stack and is skipped.`,
+      }
+    } else {
+      next.pendingDraw = { type, count: remaining }
+      next.lastAction = {
+        type: 'forced-draw-partial',
+        by: uid,
+        message: `${nameFor(next, uid)} draws one (${remaining} more to go)...`,
+      }
     }
     next.updatedAt = Date.now()
     return next
   }
 
-  const drawn = []
-  let last = null
-  let guard = 0
-  do {
-    last = drawOne(next)
-    next.hands[uid].push(last)
-    drawn.push(last)
-    guard += 1
-  } while (!isPlayable(last, topCard(next), next.currentColor) && guard < 500)
+  next.lastDraw = { id: Date.now(), by: uid, cardIds: [card.id], forced: false }
 
-  next.lastDraw = { id: Date.now(), by: uid, cardIds: drawn.map((c) => c.id), forced: false }
-
-  if (isPlayable(last, topCard(next), next.currentColor)) {
+  if (isPlayable(card, topCard(next), next.currentColor)) {
     next.awaitingDrawDecision = uid
-    next.lastAction = {
-      type: 'draw',
-      by: uid,
-      message:
-        drawn.length === 1
-          ? `${nameFor(next, uid)} drew a card.`
-          : `${nameFor(next, uid)} drew ${drawn.length} cards before finding a playable one.`,
-    }
+    next.lastAction = { type: 'draw', by: uid, message: `${nameFor(next, uid)} drew a card.` }
   } else {
-    stepIndex(next, 1)
-    next.lastAction = { type: 'draw-pass', by: uid, message: `${nameFor(next, uid)} drew ${drawn.length} and passed.` }
+    next.lastAction = { type: 'draw-again', by: uid, message: `${nameFor(next, uid)} drew a card — no play, draw again.` }
   }
   next.updatedAt = Date.now()
   return next

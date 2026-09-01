@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
 import * as engine from '../lib/uno/engine.js'
@@ -91,16 +91,18 @@ function playerInfo(id) {
   return {
     uid: id,
     name: p?.name ?? 'Player',
+    cards: game.value.hands[id] || [],
     score: game.value.scores[id] ?? 0,
-    cardCount: game.value.hands[id]?.length ?? 0,
     isTurn: actionable.value === id,
     vulnerable: (game.value.hands[id]?.length ?? 0) === 1 && !game.value.unoCalled[id],
     waitingOn: !!pendingDraw.value && actionable.value === id,
   }
 }
 
-// Seat opponents in an arc across the top of the table, like sitting around
-// it at home — "me" occupies the near/bottom edge.
+// Seats are FIXED around the table in turn order, "me" at the near/bottom
+// edge — exactly like sitting around a real table. Going around the arc in
+// seat order traces the play order; the direction arrow (below) shows which
+// way that currently flows, since Reverse flips the direction, not the seats.
 const opponentSeats = computed(() => {
   const list = opponents.value
   const n = list.length
@@ -118,6 +120,43 @@ const opponentSeats = computed(() => {
     return { ...p, style: { left: `${left}%`, top: `${top50}%` } }
   })
 })
+
+// ---- Decorative circular direction arrow around the piles ----
+function ellipseArcPath(cx, cy, rx, ry, startDeg, endDeg) {
+  const toXY = (deg) => {
+    const rad = (deg * Math.PI) / 180
+    return [cx + rx * Math.cos(rad), cy + ry * Math.sin(rad)]
+  }
+  const [sx, sy] = toXY(startDeg)
+  const [ex, ey] = toXY(endDeg)
+  const large = Math.abs(endDeg - startDeg) > 180 ? 1 : 0
+  return `M ${sx} ${sy} A ${rx} ${ry} 0 ${large} 1 ${ex} ${ey}`
+}
+function arrowHeadPoints(cx, cy, rx, ry, endDeg, size = 13) {
+  const rad = (endDeg * Math.PI) / 180
+  const ex = cx + rx * Math.cos(rad)
+  const ey = cy + ry * Math.sin(rad)
+  const tx = -rx * Math.sin(rad)
+  const ty = ry * Math.cos(rad)
+  const len = Math.hypot(tx, ty) || 1
+  const ux = tx / len
+  const uy = ty / len
+  const nx = -uy
+  const ny = ux
+  const tipX = ex + ux * size
+  const tipY = ey + uy * size
+  const b1x = ex + nx * size * 0.55
+  const b1y = ey + ny * size * 0.55
+  const b2x = ex - nx * size * 0.55
+  const b2y = ey - ny * size * 0.55
+  return `${tipX},${tipY} ${b1x},${b1y} ${b2x},${b2y}`
+}
+const DIR_CX = 150
+const DIR_CY = 95
+const DIR_RX = 142
+const DIR_RY = 88
+const directionArcPath = ellipseArcPath(DIR_CX, DIR_CY, DIR_RX, DIR_RY, -35, 250)
+const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 20)
 
 function onCardClick(card) {
   unlockAudio()
@@ -211,9 +250,72 @@ async function onLeave() {
   await roomStore.leave(uid.value)
 }
 
-// ---- Sound reactions to remote/local state changes ----
+// ---- Flying-card animations: a lightweight overlay of "cloned" cards that
+// animate from one DOM element's position to another's, then vanish once the
+// real state has settled underneath. ----
+const discardPileEl = ref(null)
+const drawPileEl = ref(null)
+const myHandEl = ref(null)
+const seatEls = {}
+function setSeatRef(id, el) {
+  if (el) seatEls[id] = el
+  else delete seatEls[id]
+}
+function seatOrHandEl(playerUid) {
+  if (playerUid === uid.value) return myHandEl.value
+  return seatEls[playerUid] || null
+}
+
+const flying = ref([])
+const CARD_NATURAL_W = 64
+const CARD_NATURAL_H = 96
+
+function spawnFly(fromEl, toEl, card) {
+  if (!fromEl || !toEl) return
+  const fromRect = fromEl.getBoundingClientRect()
+  const toRect = toEl.getBoundingClientRect()
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const startScale = Math.max(0.3, fromRect.width / CARD_NATURAL_W)
+  const endScale = Math.max(0.3, toRect.width / CARD_NATURAL_W)
+  const startX = fromRect.left + fromRect.width / 2 - CARD_NATURAL_W / 2
+  const startY = fromRect.top + fromRect.height / 2 - CARD_NATURAL_H / 2
+  const endX = toRect.left + toRect.width / 2 - CARD_NATURAL_W / 2
+  const endY = toRect.top + toRect.height / 2 - CARD_NATURAL_H / 2
+
+  const item = reactive({
+    id,
+    card,
+    style: {
+      transform: `translate(${startX}px, ${startY}px) scale(${startScale})`,
+      transition: 'transform 380ms cubic-bezier(0.22,0.68,0.32,1), opacity 380ms ease',
+      opacity: 1,
+    },
+  })
+  flying.value.push(item)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      item.style = {
+        ...item.style,
+        transform: `translate(${endX}px, ${endY}px) scale(${endScale})`,
+      }
+    })
+  })
+  setTimeout(() => {
+    flying.value = flying.value.filter((f) => f.id !== id)
+  }, 420)
+}
+
+function spawnFlyBatch(fromEl, toEl, cards, stagger = 110) {
+  cards.forEach((card, i) => {
+    setTimeout(() => spawnFly(fromEl, toEl, card), i * stagger)
+  })
+}
+
+// ---- Sound + fly-animation reactions to remote/local state changes ----
 let lastSeenUpdate = game.value?.updatedAt ?? null
 let lastSeenTurnFor = null
+
+const PLAY_TYPES = new Set(['play', 'skip', 'reverse', 'stack-draw2', 'stack-wild4', 'wild'])
 
 watch(
   () => game.value?.updatedAt,
@@ -222,10 +324,10 @@ watch(
     if (!g || g.updatedAt === lastSeenUpdate) return
     lastSeenUpdate = g.updatedAt
 
-    if (g.lastDraw) {
-      sfx.cardDraw(g.lastDraw.cardIds.length)
-    }
-    switch (g.lastAction?.type) {
+    if (g.lastDraw) sfx.cardDraw(g.lastDraw.cardIds.length)
+
+    const la = g.lastAction
+    switch (la?.type) {
       case 'play':
         sfx.cardPlay()
         break
@@ -261,6 +363,15 @@ watch(
       default:
         break
     }
+
+    if (la?.card && PLAY_TYPES.has(la.type)) {
+      const fromEl = seatOrHandEl(la.by)
+      if (fromEl && discardPileEl.value) spawnFly(fromEl, discardPileEl.value, la.card)
+    }
+    if (g.lastDraw && drawPileEl.value) {
+      const toEl = seatOrHandEl(g.lastDraw.by)
+      if (toEl) spawnFlyBatch(drawPileEl.value, toEl, g.lastDraw.cardIds.map(() => null))
+    }
   },
 )
 
@@ -271,7 +382,10 @@ watch(actionable, (id) => {
   lastSeenTurnFor = id
 })
 
-// ---- AFK auto-play: if nobody acts within AFK_SECONDS, play a random legal move ----
+// ---- AFK auto-play: if nobody acts within AFK_SECONDS, play a random legal
+// move for them so the game never stalls. Drawing still happens one card at
+// a time (mirroring the manual click-per-draw flow) but without the delay
+// between clicks, since at that point a human isn't engaging anyway. ----
 const afkSecondsLeft = ref(null)
 let afkTimeout = null
 let afkInterval = null
@@ -301,6 +415,17 @@ function pickRandomAutoAction(g, actUid) {
   return options[Math.floor(Math.random() * options.length)]
 }
 
+async function autoDrawUntilResolved(actUid) {
+  for (let guard = 0; guard < 60; guard += 1) {
+    await roomStore.drawCard(actUid)
+    const g = game.value
+    if (!g) return
+    if (g.awaitingDrawDecision === actUid) return
+    if (engine.actionableUid(g) !== actUid) return
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+}
+
 async function performAutoAction(actUid) {
   const g = game.value
   if (!g) return
@@ -308,7 +433,7 @@ async function performAutoAction(actUid) {
   try {
     if (action.kind === 'color') await roomStore.chooseStarterColor(actUid, action.color)
     else if (action.kind === 'pass') await roomStore.passTurn(actUid)
-    else if (action.kind === 'draw') await roomStore.drawCard(actUid)
+    else if (action.kind === 'draw') await autoDrawUntilResolved(actUid)
     else if (action.kind === 'play') {
       const color =
         action.card.type === 'wild' || action.card.type === 'wild4'
@@ -380,10 +505,11 @@ onBeforeUnmount(() => {
         :key="p.uid"
         class="absolute -translate-x-1/2 -translate-y-1/2"
         :style="p.style"
+        :ref="(el) => setSeatRef(p.uid, el)"
       >
         <PlayerBadge
           :name="p.name"
-          :card-count="p.cardCount"
+          :cards="p.cards"
           :is-turn="p.isTurn"
           :score="p.score"
           :vulnerable="p.vulnerable"
@@ -406,36 +532,47 @@ onBeforeUnmount(() => {
           "
         >
           {{ turnBannerText }}
-          <span class="ml-1">{{ game.direction === 1 ? '↻' : '↺' }}</span>
           <span v-if="afkSecondsLeft !== null && afkSecondsLeft <= 5" class="ml-1 opacity-80">
             (auto in {{ afkSecondsLeft }}s)
           </span>
         </p>
 
-        <div class="flex items-center gap-5">
-          <button type="button" class="flex flex-col items-center gap-1" @click="onDrawPile">
-            <PlayingCard
-              :card="null"
-              size="lg"
-              :playable="myTurn && !awaitingMyDrawDecision"
-              :glow="noPlayableCards && !mustRespondToStack"
-              :urgent="mustRespondToStack"
-              animate-in="pop"
-              :key="game.drawPile.length"
-            />
-            <span
-              class="text-[11px]"
-              :class="mustRespondToStack ? 'font-bold text-uno-red' : noPlayableCards ? 'font-bold text-uno-yellow' : 'text-slate-500'"
-            >
-              {{ drawPileLabel }}
-            </span>
-          </button>
+        <div class="relative flex items-center justify-center" style="width: 300px; height: 190px">
+          <!-- Big circular direction arrow, mirrored when play reverses -->
+          <svg
+            viewBox="0 0 300 190"
+            class="pointer-events-none absolute inset-0 h-full w-full transition-transform duration-500"
+            :class="game.direction === -1 ? '[transform:scaleX(-1)]' : ''"
+          >
+            <path :d="directionArcPath" fill="none" stroke="#facc15" stroke-width="6" stroke-linecap="round" opacity="0.8" />
+            <polygon :points="directionArrowPoints" fill="#facc15" opacity="0.95" />
+          </svg>
 
-          <div class="flex flex-col items-center gap-1">
-            <div class="relative rounded-xl" :style="{ boxShadow: `0 0 0 3px ${COLOR_HEX[game.currentColor]}` }">
-              <PlayingCard :card="top" size="lg" animate-in="flip" :key="top?.id" />
+          <div class="relative flex items-center gap-5">
+            <button type="button" class="flex flex-col items-center gap-1" ref="drawPileEl" @click="onDrawPile">
+              <PlayingCard
+                :card="null"
+                size="lg"
+                :playable="myTurn && !awaitingMyDrawDecision"
+                :glow="noPlayableCards && !mustRespondToStack"
+                :urgent="mustRespondToStack"
+                animate-in="pop"
+                :key="game.drawPile.length"
+              />
+              <span
+                class="text-[11px]"
+                :class="mustRespondToStack ? 'font-bold text-uno-red' : noPlayableCards ? 'font-bold text-uno-yellow' : 'text-slate-500'"
+              >
+                {{ drawPileLabel }}
+              </span>
+            </button>
+
+            <div class="flex flex-col items-center gap-1" ref="discardPileEl">
+              <div class="relative rounded-xl" :style="{ boxShadow: `0 0 0 3px ${COLOR_HEX[game.currentColor]}` }">
+                <PlayingCard :card="top" size="lg" animate-in="flip" :key="top?.id" />
+              </div>
+              <span class="text-[11px] capitalize text-slate-500">{{ game.currentColor }}</span>
             </div>
-            <span class="text-[11px] capitalize text-slate-500">{{ game.currentColor }}</span>
           </div>
         </div>
 
@@ -454,7 +591,7 @@ onBeforeUnmount(() => {
       {{ game.lastAction.message }}
     </p>
 
-    <!-- My hand -->
+    <!-- My hand: overlapping fan, like cards held in your own two hands -->
     <div class="relative rounded-2xl border border-white/5 bg-white/[0.03] p-3" :class="shakeHand ? 'animate-shake' : ''">
       <div
         v-if="!myTurn && game.status === 'playing'"
@@ -473,20 +610,36 @@ onBeforeUnmount(() => {
           UNO!
         </button>
       </div>
-      <div class="flex gap-2 overflow-x-auto pb-1">
-        <PlayingCard
+      <div ref="myHandEl" class="flex items-end overflow-x-auto py-2 pl-2 pr-6">
+        <div
           v-for="(card, idx) in myHand"
           :key="card.id"
-          :card="card"
-          :playable="isCardPlayable(card)"
-          :disabled="!isCardPlayable(card)"
-          :glow="isCardPlayable(card) && !pendingDraw"
-          :urgent="isCardPlayable(card) && !!pendingDraw"
-          animate-in="deal"
-          :style="{ animationDelay: `${idx * 35}ms` }"
-          @click="onCardClick(card)"
-        />
+          class="shrink-0 transition-transform hover:z-30"
+          :style="{ marginLeft: idx === 0 ? '0' : '-2.6rem', zIndex: idx }"
+        >
+          <PlayingCard
+            :card="card"
+            size="lg"
+            :playable="isCardPlayable(card)"
+            :disabled="!isCardPlayable(card)"
+            :glow="isCardPlayable(card) && !pendingDraw"
+            :urgent="isCardPlayable(card) && !!pendingDraw"
+            animate-in="deal"
+            :style="{ animationDelay: `${idx * 35}ms` }"
+            @click="onCardClick(card)"
+          />
+        </div>
       </div>
+    </div>
+
+    <!-- Flying card overlay -->
+    <div
+      v-for="f in flying"
+      :key="f.id"
+      class="pointer-events-none fixed left-0 top-0 z-[60]"
+      :style="f.style"
+    >
+      <PlayingCard :card="f.card" size="md" />
     </div>
 
     <transition name="fade">
