@@ -8,14 +8,15 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   glow: { type: Boolean, default: false }, // gentle "you can play this" ring
   urgent: { type: Boolean, default: false }, // "you must stack this" ring
+  flash: { type: String, default: '' }, // '', 'yellow', 'red' — strobing "you must draw" border
   animateIn: { type: String, default: '' }, // '', 'deal', 'flip', 'fly', 'pop'
 })
 
 const sizes = {
   sm: 'w-10 h-14 rounded-lg',
   md: 'w-16 h-24 rounded-xl',
-  lg: 'w-20 h-28 rounded-xl',
-  xl: 'w-24 h-36 rounded-2xl',
+  lg: 'w-40 h-56 rounded-2xl', // center piles
+  xl: 'w-48 h-72 rounded-2xl', // your own hand
 }
 
 const enterAnim = {
@@ -69,7 +70,15 @@ const altText = computed(() => {
       enterAnim[animateIn],
       playable && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
       disabled ? 'brightness-[0.45] saturate-[0.7]' : '',
-      urgent ? 'animate-stack-pulse border-uno-red' : glow ? 'animate-ring-pulse border-uno-yellow' : '',
+      flash === 'red'
+        ? 'animate-flash-red border-uno-red'
+        : flash === 'yellow'
+          ? 'animate-flash-yellow border-uno-yellow'
+          : urgent
+            ? 'animate-stack-pulse border-uno-red'
+            : glow
+              ? 'animate-ring-pulse border-uno-yellow'
+              : '',
     ]"
   >
     <template v-if="!card">
