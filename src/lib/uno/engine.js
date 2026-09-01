@@ -362,7 +362,12 @@ export function passTurn(state, uid) {
 export function callUno(state, uid) {
   const next = clone(state)
   if (next.status !== 'playing') throw new Error('Round is not active.')
-  if (!next.hands[uid]) throw new Error('Unknown player.')
+  const hand = next.hands[uid]
+  if (!hand) throw new Error('Unknown player.')
+  // Only valid once you're down to your last one or two cards — otherwise a
+  // stale/racing client could call it while sitting on a full hand and stay
+  // protected from being caught once they actually reach one card.
+  if (hand.length > 2) throw new Error('You can only call UNO when you have 1 or 2 cards left.')
   next.unoCalled[uid] = true
   next.lastAction = { type: 'uno-call', by: uid, message: `${nameFor(next, uid)} called UNO!` }
   next.updatedAt = Date.now()

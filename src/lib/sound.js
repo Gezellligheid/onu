@@ -88,6 +88,23 @@ function run(fn) {
   }
 }
 
+// A few recorded "UNO!" call clips — one is picked at random each time
+// someone calls UNO, layered in alongside the synthesized chime below.
+const UNO_CALL_CLIPS = ['/sounds/uno-calls/uno1.m4a', '/sounds/uno-calls/uno2.m4a', '/sounds/uno-calls/uno3.m4a']
+
+function playRandomUnoClip() {
+  if (muted) return
+  try {
+    const src = UNO_CALL_CLIPS[Math.floor(Math.random() * UNO_CALL_CLIPS.length)]
+    const audio = new Audio(src)
+    audio.volume = 0.85
+    const p = audio.play()
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } catch {
+    /* audio is best-effort */
+  }
+}
+
 export const sfx = {
   cardPlay() {
     run((c) => {
@@ -115,9 +132,10 @@ export const sfx = {
     })
   },
   unoCall() {
+    playRandomUnoClip()
     run((c) => {
-      tone(c, { freq: 700, duration: 0.08, type: 'square', gain: 0.12 })
-      tone(c, { freq: 1000, start: 0.08, duration: 0.12, type: 'square', gain: 0.12 })
+      tone(c, { freq: 700, duration: 0.08, type: 'square', gain: 0.1 })
+      tone(c, { freq: 1000, start: 0.08, duration: 0.12, type: 'square', gain: 0.1 })
     })
   },
   caught() {
