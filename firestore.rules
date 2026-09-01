@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Casual, friends-only game rooms. Any signed-in (anonymous) user can
+    // read/join a room if they know its invite code. Game moves are validated
+    // client-side by the UNO engine (src/lib/uno/engine.js) before being
+    // written here — these rules only gate "must be signed in" and "only the
+    // host may create/delete a room". See README "Security model" for the
+    // tradeoffs of this approach vs. a Cloud Functions backend.
+    match /rooms/{code} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.hostUid == request.auth.uid;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null
+                    && resource.data.hostUid == request.auth.uid;
+    }
+  }
+}
