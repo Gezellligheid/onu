@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   card: { type: Object, default: null }, // null => face-down card back
-  size: { type: String, default: 'md' }, // sm | md | lg
+  size: { type: String, default: 'md' }, // sm | md | lg | xl
   playable: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   glow: { type: Boolean, default: false }, // gentle "you can play this" ring
@@ -15,6 +15,7 @@ const sizes = {
   sm: 'w-10 h-14 rounded-lg',
   md: 'w-16 h-24 rounded-xl',
   lg: 'w-20 h-28 rounded-xl',
+  xl: 'w-24 h-36 rounded-2xl',
 }
 
 const enterAnim = {

@@ -54,6 +54,30 @@ function isCardPlayable(card) {
   return engine.isPlayableNow(card, game.value)
 }
 
+// Your own hand fans out in a slight arc, center raised — like cards held
+// in two hands — instead of a flat overlapping row. Spacing/curve/rotation
+// all shrink as the hand grows so a big hand gets denser, not wider.
+const HAND_MAX_SPACING = 58
+const HAND_ARC_SPREAD = 260
+function handCardStyle(i, total) {
+  if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
+  const mid = (total - 1) / 2
+  const offset = i - mid
+  const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / total)
+  const rotate = offset * Math.min(6, 46 / total)
+  const x = offset * spacing
+  const y = offset * offset * Math.min(2.4, 16 / total)
+  return {
+    transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg)`,
+    zIndex: i,
+  }
+}
+const handFanWidth = computed(() => {
+  const n = myHand.value.length
+  const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / Math.max(n, 1))
+  return Math.max(n - 1, 0) * spacing + 120
+})
+
 const noPlayableCards = computed(() => {
   if (!myTurn.value || awaitingMyDrawDecision.value || game.value.pendingColorChoice) return false
   return myHand.value.every((c) => !engine.isPlayableNow(c, game.value))
@@ -84,7 +108,21 @@ const turnBannerText = computed(() => {
   return cur === uid.value ? 'Your turn' : `${nameOf(cur)}'s turn`
 })
 
-const opponents = computed(() => game.value.playerOrder.filter((id) => id !== uid.value).map((id) => playerInfo(id)))
+// Rotated relative to MY OWN seat so every viewer sees the same mental
+// model: the first opponent seat is always whoever plays right after me,
+// then the next, wrapping back around to just before me. Without this
+// rotation, two different players would see the table arranged
+// differently and the direction arrow would stop meaning the same thing
+// for everyone.
+const opponents = computed(() => {
+  const order = game.value.playerOrder
+  const n = order.length
+  const myIdx = order.indexOf(uid.value)
+  if (myIdx === -1) return order.map((id) => playerInfo(id))
+  const rotated = []
+  for (let i = 1; i < n; i += 1) rotated.push(order[(myIdx + i) % n])
+  return rotated.map((id) => playerInfo(id))
+})
 
 function playerInfo(id) {
   const p = game.value.players.find((pl) => pl.uid === id)
@@ -261,26 +299,48 @@ function setSeatRef(id, el) {
   if (el) seatEls[id] = el
   else delete seatEls[id]
 }
-function seatOrHandEl(playerUid) {
-  if (playerUid === uid.value) return myHandEl.value
-  return seatEls[playerUid] || null
+
+// Natural on-screen pixel width each endpoint's cards actually render at —
+// used to size the flying clone correctly. Deriving this from the
+// destination element's own bounding box was the bug: the hand row and
+// discard/draw wrappers are wider than a single card, so a "fly to hand"
+// animation would balloon up to the width of the whole hand panel instead
+// of landing at normal card size.
+const HAND_CARD_PX = 96 // matches PlayingCard size="xl" used for my own hand
+const SEAT_CARD_PX = 40 // matches CardFan's size="sm"
+const PILE_CARD_PX = 80 // matches PlayingCard size="lg" used for the piles
+
+function endpointFor(playerUid) {
+  if (playerUid === uid.value) return { el: myHandEl.value, size: HAND_CARD_PX, alignLeft: false }
+  return { el: seatEls[playerUid] || null, size: SEAT_CARD_PX, alignLeft: false }
 }
 
 const flying = ref([])
 const CARD_NATURAL_W = 64
 const CARD_NATURAL_H = 96
 
-function spawnFly(fromEl, toEl, card) {
-  if (!fromEl || !toEl) return
-  const fromRect = fromEl.getBoundingClientRect()
-  const toRect = toEl.getBoundingClientRect()
+function anchorPoint(rect, size, alignLeft) {
+  // For the hand row (much wider than one card, content left-aligned), land
+  // near its left edge rather than its true center; everything else is
+  // small enough that the element's own center is a fine target.
+  const x = alignLeft ? rect.left + Math.min(rect.width, 70) : rect.left + rect.width / 2
+  const y = rect.top + rect.height / 2
+  return { x, y }
+}
+
+function spawnFly(from, to, card) {
+  if (!from.el || !to.el) return
+  const fromRect = from.el.getBoundingClientRect()
+  const toRect = to.el.getBoundingClientRect()
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  const startScale = Math.max(0.3, fromRect.width / CARD_NATURAL_W)
-  const endScale = Math.max(0.3, toRect.width / CARD_NATURAL_W)
-  const startX = fromRect.left + fromRect.width / 2 - CARD_NATURAL_W / 2
-  const startY = fromRect.top + fromRect.height / 2 - CARD_NATURAL_H / 2
-  const endX = toRect.left + toRect.width / 2 - CARD_NATURAL_W / 2
-  const endY = toRect.top + toRect.height / 2 - CARD_NATURAL_H / 2
+  const startScale = from.size / CARD_NATURAL_W
+  const endScale = to.size / CARD_NATURAL_W
+  const start = anchorPoint(fromRect, from.size, from.alignLeft)
+  const end = anchorPoint(toRect, to.size, to.alignLeft)
+  const startX = start.x - CARD_NATURAL_W / 2
+  const startY = start.y - CARD_NATURAL_H / 2
+  const endX = end.x - CARD_NATURAL_W / 2
+  const endY = end.y - CARD_NATURAL_H / 2
 
   const item = reactive({
     id,
@@ -305,9 +365,9 @@ function spawnFly(fromEl, toEl, card) {
   }, 420)
 }
 
-function spawnFlyBatch(fromEl, toEl, cards, stagger = 110) {
+function spawnFlyBatch(from, to, cards, stagger = 110) {
   cards.forEach((card, i) => {
-    setTimeout(() => spawnFly(fromEl, toEl, card), i * stagger)
+    setTimeout(() => spawnFly(from, to, card), i * stagger)
   })
 }
 
@@ -364,13 +424,12 @@ watch(
         break
     }
 
-    if (la?.card && PLAY_TYPES.has(la.type)) {
-      const fromEl = seatOrHandEl(la.by)
-      if (fromEl && discardPileEl.value) spawnFly(fromEl, discardPileEl.value, la.card)
+    if (la?.card && PLAY_TYPES.has(la.type) && discardPileEl.value) {
+      spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card)
     }
     if (g.lastDraw && drawPileEl.value) {
-      const toEl = seatOrHandEl(g.lastDraw.by)
-      if (toEl) spawnFlyBatch(drawPileEl.value, toEl, g.lastDraw.cardIds.map(() => null))
+      const from = { el: drawPileEl.value, size: PILE_CARD_PX, alignLeft: false }
+      spawnFlyBatch(from, endpointFor(g.lastDraw.by), g.lastDraw.cardIds.map(() => null))
     }
   },
 )
@@ -591,35 +650,34 @@ onBeforeUnmount(() => {
       {{ game.lastAction.message }}
     </p>
 
-    <!-- My hand: overlapping fan, like cards held in your own two hands -->
-    <div class="relative rounded-2xl border border-white/5 bg-white/[0.03] p-3" :class="shakeHand ? 'animate-shake' : ''">
-      <div
-        v-if="!myTurn && game.status === 'playing'"
-        class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-slate-950/40 text-xs font-medium text-slate-400"
-      >
-        Waiting for {{ turnBannerText }}
-      </div>
-      <div class="mb-2 flex items-center justify-between px-1">
-        <span class="text-xs text-slate-500">Your hand ({{ myHand.length }})</span>
+    <!-- Spacer so page content isn't hidden behind the floating hand -->
+    <div class="h-36"></div>
+
+    <!-- My hand: floats freely in front of everything, no boxed panel -->
+    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
+      <div class="pointer-events-auto mb-1 flex items-center gap-3">
+        <span class="rounded-full bg-slate-950/70 px-2 py-0.5 text-xs text-slate-400 backdrop-blur">
+          {{ myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
+        </span>
         <button
           v-if="showUnoButton"
           type="button"
-          class="animate-pulse-glow rounded-full bg-uno-red px-3 py-1 text-xs font-bold text-white shadow"
+          class="pointer-events-auto animate-pulse-glow rounded-full bg-uno-red px-3 py-1 text-xs font-bold text-white shadow"
           @click="onCallUno"
         >
           UNO!
         </button>
       </div>
-      <div ref="myHandEl" class="flex items-end overflow-x-auto py-2 pl-2 pr-6">
+      <div class="pointer-events-auto relative h-40" :style="{ width: `${handFanWidth}px` }" ref="myHandEl">
         <div
           v-for="(card, idx) in myHand"
           :key="card.id"
-          class="shrink-0 transition-transform hover:z-30"
-          :style="{ marginLeft: idx === 0 ? '0' : '-2.6rem', zIndex: idx }"
+          class="absolute left-1/2 top-4 origin-bottom hover:z-30"
+          :style="handCardStyle(idx, myHand.length)"
         >
           <PlayingCard
             :card="card"
-            size="lg"
+            size="xl"
             :playable="isCardPlayable(card)"
             :disabled="!isCardPlayable(card)"
             :glow="isCardPlayable(card) && !pendingDraw"
