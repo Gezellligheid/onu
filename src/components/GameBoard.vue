@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
 import * as engine from '../lib/uno/engine.js'
@@ -70,15 +70,28 @@ function isCardPlayable(card) {
 }
 
 // Your own hand fans out in a slight arc, center raised — like cards held
-// in two hands — instead of a flat overlapping row. Spacing/curve/rotation
-// all shrink as the hand grows so a big hand gets denser, not wider.
+// in two hands — instead of a flat overlapping row. The arc widens as you
+// draw more cards (using up to the full screen width), and only starts
+// getting denser once it would otherwise run off the edge of the screen.
 const HAND_MAX_SPACING = 81
-const HAND_ARC_SPREAD = 364
+const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
+function onResize() {
+  viewportWidth.value = window.innerWidth
+}
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48))
+
+function handSpacing(total) {
+  if (total <= 1) return HAND_MAX_SPACING
+  return Math.min(HAND_MAX_SPACING, handAvailableWidth.value / (total - 1))
+}
 function handCardStyle(i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
   const offset = i - mid
-  const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / total)
+  const spacing = handSpacing(total)
   const rotate = offset * Math.min(6, 46 / total)
   const x = offset * spacing
   const y = offset * offset * Math.min(3.4, 22 / total)
@@ -89,8 +102,7 @@ function handCardStyle(i, total) {
 }
 const handFanWidth = computed(() => {
   const n = myHand.value.length
-  const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / Math.max(n, 1))
-  return Math.max(n - 1, 0) * spacing + 160
+  return Math.max(n - 1, 0) * handSpacing(n) + 160
 })
 
 const noPlayableCards = computed(() => {
