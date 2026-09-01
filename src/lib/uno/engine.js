@@ -127,8 +127,9 @@ export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, score
 function applyStarterEffect(state, starter) {
   const n = state.playerOrder.length
   if (starter.type === 'skip') {
+    const blocked = currentPlayerId(state)
     state.currentIndex = (state.currentIndex + 1) % n
-    state.lastAction = { type: 'starter-skip', message: `${nameFor(state, currentPlayerId(state))} is skipped to start.` }
+    state.lastAction = { type: 'starter-skip', target: blocked, message: `${nameFor(state, blocked)} is blocked to start.` }
   } else if (starter.type === 'reverse') {
     state.direction = -1
     if (n === 2) state.currentIndex = (state.currentIndex + 1) % n
@@ -205,9 +206,12 @@ export function playCard(state, uid, cardId, chosenColor) {
     return next
   }
 
-  if (hand.length === 1) {
-    next.unoCalled[uid] = false
-  }
+  // Note: unoCalled is intentionally NOT reset here when hand.length === 1.
+  // A player who calls UNO pre-emptively (while still holding 2 cards, right
+  // before playing this one) must have that call stick — resetting it here
+  // would silently erase a legitimate early call. It starts false each round
+  // and only flips true via callUno/catchUno, which is exactly the state we
+  // want once the hand reaches 1.
 
   const n = next.playerOrder.length
 
@@ -215,8 +219,9 @@ export function playCard(state, uid, cardId, chosenColor) {
     stepIndex(next, 1)
     next.lastAction = { type: 'play', by: uid, card, message: `${nameFor(next, uid)} played ${describeCard(card)}.` }
   } else if (card.type === 'skip') {
+    const blocked = next.playerOrder[(next.currentIndex + next.direction + n * 10) % n]
     stepIndex(next, 2)
-    next.lastAction = { type: 'skip', by: uid, card, message: `${nameFor(next, uid)} played Skip.` }
+    next.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(next, blocked)} is blocked!` }
   } else if (card.type === 'reverse') {
     next.direction *= -1
     stepIndex(next, n === 2 ? 2 : 1)
@@ -300,6 +305,10 @@ export function drawCard(state, uid) {
 
   const card = drawOne(next)
   next.hands[uid].push(card)
+
+  // Growing back out of the "1 or 2 cards" zone clears any earlier UNO call
+  // — if they reach 1 card again later they'll need to call again.
+  if (next.hands[uid].length >= 3) next.unoCalled[uid] = false
 
   if (next.pendingDraw) {
     const { type } = next.pendingDraw

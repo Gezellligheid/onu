@@ -386,6 +386,56 @@ function spawnFlyBatch(from, to, cards, stagger = 110) {
   })
 }
 
+// ---- Non-card flying labels: the "UNO!" call and the "blocked" icon.
+// These don't scale to match card sizes — they're fixed-size labels that
+// just travel and fade. ----
+const tableCenterEl = ref(null)
+
+function spawnLabel(from, to, kind) {
+  if (!from.el || !to.el) return
+  const fromRect = from.el.getBoundingClientRect()
+  const toRect = to.el.getBoundingClientRect()
+  const w = kind === 'uno' ? 140 : 64
+  const h = kind === 'uno' ? 56 : 64
+  const start = anchorPoint(fromRect, from.size, from.alignLeft)
+  const end = anchorPoint(toRect, to.size, to.alignLeft)
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const item = reactive({
+    id,
+    kind,
+    style: {
+      transform: `translate(${start.x - w / 2}px, ${start.y - h / 2}px) scale(0.5)`,
+      transition: 'transform 550ms cubic-bezier(0.2,0.75,0.3,1), opacity 550ms ease',
+      opacity: 0,
+    },
+  })
+  flying.value.push(item)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      item.style = {
+        ...item.style,
+        transform: `translate(${end.x - w / 2}px, ${end.y - h / 2}px) scale(1.15)`,
+        opacity: 1,
+      }
+    })
+  })
+  setTimeout(() => {
+    flying.value = flying.value.filter((f) => f.id !== id)
+  }, 620)
+}
+
+// A brief, big "BLOCKED!" flash shown only to the player who got skipped.
+const blockedFlash = ref(false)
+let blockedFlashTimer = null
+function triggerBlockedFlash() {
+  blockedFlash.value = false
+  requestAnimationFrame(() => {
+    blockedFlash.value = true
+    clearTimeout(blockedFlashTimer)
+    blockedFlashTimer = setTimeout(() => (blockedFlash.value = false), 900)
+  })
+}
+
 // ---- Sound + fly-animation reactions to remote/local state changes ----
 let lastSeenUpdate = game.value?.updatedAt ?? null
 let lastSeenTurnFor = null
@@ -445,6 +495,16 @@ watch(
     if (g.lastDraw && drawPileEl.value) {
       const from = { el: drawPileEl.value, size: PILE_CARD_PX, alignLeft: false }
       spawnFlyBatch(from, endpointFor(g.lastDraw.by), g.lastDraw.cardIds.map(() => null))
+    }
+
+    if (la?.type === 'uno-call' && tableCenterEl.value) {
+      spawnLabel(endpointFor(la.by), { el: tableCenterEl.value, size: 0, alignLeft: false }, 'uno')
+    }
+
+    if ((la?.type === 'skip' || la?.type === 'starter-skip') && la.target) {
+      const to = endpointFor(la.target)
+      if (la.by) spawnLabel(endpointFor(la.by), to, 'block')
+      if (la.target === uid.value) triggerBlockedFlash()
     }
   },
 )
@@ -547,6 +607,7 @@ watch(
 onBeforeUnmount(() => {
   clearAfk()
   clearTimeout(toastTimer)
+  clearTimeout(blockedFlashTimer)
 })
 </script>
 
@@ -594,7 +655,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Center: piles + turn/stack banners -->
-      <div class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3">
+      <div ref="tableCenterEl" class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3">
         <p
           class="rounded-full px-3 py-1 text-center font-display text-sm font-semibold shadow"
           :class="
@@ -710,15 +771,38 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Flying card overlay -->
+    <!-- Flying card / label overlay -->
     <div
       v-for="f in flying"
       :key="f.id"
       class="pointer-events-none fixed left-0 top-0 z-[60]"
       :style="f.style"
     >
-      <PlayingCard :card="f.card" size="md" />
+      <PlayingCard v-if="!f.kind" :card="f.card" size="md" />
+      <div
+        v-else-if="f.kind === 'uno'"
+        class="whitespace-nowrap font-display text-5xl font-extrabold text-uno-red"
+        style="-webkit-text-stroke: 3px white; text-shadow: 0 4px 10px rgba(0, 0, 0, 0.7)"
+      >
+        UNO!
+      </div>
+      <div
+        v-else-if="f.kind === 'block'"
+        class="flex h-16 w-16 items-center justify-center rounded-full border-4 border-white bg-uno-red text-3xl shadow-2xl"
+      >
+        🚫
+      </div>
     </div>
+
+    <!-- Big "you got blocked" flash, shown only to the player who was skipped -->
+    <transition name="block-flash">
+      <div v-if="blockedFlash" class="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center">
+        <div class="rounded-3xl border-4 border-white bg-uno-red/95 px-10 py-6 text-center shadow-2xl">
+          <div class="text-6xl">🚫</div>
+          <p class="mt-2 font-display text-4xl font-extrabold text-white">BLOCKED!</p>
+        </div>
+      </div>
+    </transition>
 
     <transition name="fade">
       <div
@@ -748,6 +832,21 @@ onBeforeUnmount(() => {
 }
 .fade-enter-from,
 .fade-leave-to {
+  opacity: 0;
+}
+.block-flash-enter-active {
+  transition:
+    opacity 0.15s ease,
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.block-flash-leave-active {
+  transition: opacity 0.4s ease;
+}
+.block-flash-enter-from {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.block-flash-leave-to {
   opacity: 0;
 }
 </style>
