@@ -623,6 +623,33 @@ watch(
   { immediate: true },
 )
 
+// ---- Forced +2/+4 draws with no stack option happen automatically — no
+// click needed — but each card still draws (and flies/animates) one at a
+// time via the normal single-card drawCard flow. Only fires from the
+// affected player's own client; if they're unreachable the AFK fallback
+// above still resolves it after a few seconds. ----
+let autoStackDrawFor = null
+watch(
+  () => [pendingDraw.value, actionable.value, game.value?.updatedAt],
+  () => {
+    const g = game.value
+    if (!g || !pendingDraw.value || actionable.value !== uid.value) return
+    const hand = g.hands[uid.value] || []
+    const canStack = hand.some((c) => engine.isPlayableNow(c, g))
+    if (canStack) return
+    if (autoStackDrawFor === uid.value) return
+    autoStackDrawFor = uid.value
+    autoDrawUntilResolved(uid.value)
+      .catch(() => {
+        // Race with another client/action — safe to ignore, state will settle.
+      })
+      .finally(() => {
+        if (autoStackDrawFor === uid.value) autoStackDrawFor = null
+      })
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   clearAfk()
   clearTimeout(toastTimer)

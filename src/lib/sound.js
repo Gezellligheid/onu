@@ -88,16 +88,18 @@ function run(fn) {
   }
 }
 
-// A few recorded "UNO!" call clips — one is picked at random each time
-// someone calls UNO, layered in alongside the synthesized chime below.
+// Recorded clips, layered in alongside their synthesized counterparts below.
+// One is picked at random from each list per occurrence.
 const UNO_CALL_CLIPS = ['/sounds/uno-calls/uno1.m4a', '/sounds/uno-calls/uno2.m4a', '/sounds/uno-calls/uno3.m4a']
+const BLOCKED_CLIPS = ['/sounds/blocked/blocked1.m4a', '/sounds/blocked/blocked2.m4a', '/sounds/blocked/blocked3.m4a']
+const ROTATE_CLIPS = ['/sounds/rotate/rotate1.m4a', '/sounds/rotate/rotate2.m4a']
 
-function playRandomUnoClip() {
+function playRandomClip(clips, volume = 0.85) {
   if (muted) return
   try {
-    const src = UNO_CALL_CLIPS[Math.floor(Math.random() * UNO_CALL_CLIPS.length)]
+    const src = clips[Math.floor(Math.random() * clips.length)]
     const audio = new Audio(src)
-    audio.volume = 0.85
+    audio.volume = volume
     const p = audio.play()
     if (p && typeof p.catch === 'function') p.catch(() => {})
   } catch {
@@ -132,7 +134,7 @@ export const sfx = {
     })
   },
   unoCall() {
-    playRandomUnoClip()
+    playRandomClip(UNO_CALL_CLIPS)
     run((c) => {
       tone(c, { freq: 700, duration: 0.08, type: 'square', gain: 0.1 })
       tone(c, { freq: 1000, start: 0.08, duration: 0.12, type: 'square', gain: 0.1 })
@@ -145,14 +147,16 @@ export const sfx = {
     })
   },
   skip() {
+    playRandomClip(BLOCKED_CLIPS)
     run((c) => {
-      tone(c, { freq: 300, duration: 0.1, type: 'square', gain: 0.1, glideTo: 150 })
+      tone(c, { freq: 300, duration: 0.1, type: 'square', gain: 0.08, glideTo: 150 })
     })
   },
   reverse() {
+    playRandomClip(ROTATE_CLIPS)
     run((c) => {
-      tone(c, { freq: 440, duration: 0.08, type: 'sine', gain: 0.1 })
-      tone(c, { freq: 330, start: 0.07, duration: 0.08, type: 'sine', gain: 0.1 })
+      tone(c, { freq: 440, duration: 0.08, type: 'sine', gain: 0.08 })
+      tone(c, { freq: 330, start: 0.07, duration: 0.08, type: 'sine', gain: 0.08 })
     })
   },
   stack() {
