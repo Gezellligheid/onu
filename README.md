@@ -94,7 +94,15 @@ Based on the [official rules](https://www.unorules.com/), plus a few common hous
 - **Card artwork** lives in `public/cards/` (`{color}-{value|skip|reverse|draw2}.jpg`, plus `wild.jpg` / `wild-draw4.jpg`) and is rendered by [`PlayingCard.vue`](src/components/PlayingCard.vue); the face-down back is drawn with CSS so no back-of-card image is needed.
 - **Animations** — cards visibly fly from a player's hand to the discard pile when played, and from the draw pile to whoever's drawing (each one its own flight, matching the click-per-card draw rule above); the discard pile flips when the top card changes, the draw pile pops on every draw, playable cards get a soft pulsing ring (a red pulsing ring instead when you must respond to a +2/+4 stack), and an invalid action shakes your hand.
 - **Seats are fixed, like a real table** — opponents sit in a permanent arc in turn order with "you" at the near edge, so walking around the arc *is* the play order. A big circular arrow behind the piles (mirrored when Reverse flips the direction) shows which way play currently flows, colored to match the current color.
-- **Sound effects** are synthesized at runtime with the Web Audio API (see [`src/lib/sound.js`](src/lib/sound.js)) — no downloaded assets, no licensing/attribution questions, fully offline-capable. The exceptions are calling "UNO!" (`public/sounds/uno-calls/`), playing Skip (`public/sounds/blocked/`), and playing Reverse (`public/sounds/rotate/`), each of which plays a random recorded clip layered with a small synthesized accent — those clips are user-supplied audio, not sourced by this app. A mute toggle sits in the top-right of the game screen and the preference persists via `localStorage`.
+- **Sound effects** are synthesized at runtime with the Web Audio API (see [`src/lib/sound.js`](src/lib/sound.js)) — no downloaded assets, no licensing/attribution questions, fully offline-capable. The exceptions are recorded clips (user-supplied, not sourced by this app) layered on top of their synthesized accents:
+  - Calling "UNO!" → `public/sounds/uno-calls/`
+  - Playing Skip → `public/sounds/blocked/`
+  - Playing Reverse → `public/sounds/rotate/`
+  - The current color changing (a color match, or a Wild/Wild+4 choosing one) → `public/sounds/colors/{red,yellow,green,blue}.m4a`, the exact color, not random
+  - A Wild +4 specifically being played (not a plain Wild) → `public/sounds/blackcard/`
+  - A forced +2/+4 penalty draw → `public/sounds/drawstack/`, played **once** per penalty regardless of how many cards it draws (not once per card)
+
+  A mute toggle sits in the top-right of the game screen and the preference persists via `localStorage`.
 - **Turn clarity** — the whole table gets a soft glow on your turn, the active seat's avatar has a pulsing ring and a little pointer under it, and a banner in the center always says exactly what's happening ("Your turn", "X must respond to the +6 stack!", "Choose a color!", etc). The draw pile itself labels what it wants ("Draw!" or "Draw 4!") whenever you have no other option.
 
 ## Scoring / pointing system

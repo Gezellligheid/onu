@@ -93,11 +93,18 @@ function run(fn) {
 const UNO_CALL_CLIPS = ['/sounds/uno-calls/uno1.m4a', '/sounds/uno-calls/uno2.m4a', '/sounds/uno-calls/uno3.m4a']
 const BLOCKED_CLIPS = ['/sounds/blocked/blocked1.m4a', '/sounds/blocked/blocked2.m4a', '/sounds/blocked/blocked3.m4a']
 const ROTATE_CLIPS = ['/sounds/rotate/rotate1.m4a', '/sounds/rotate/rotate2.m4a']
+const DRAW_STACK_CLIPS = ['/sounds/drawstack/drawstack1.m4a', '/sounds/drawstack/drawstack2.m4a']
+const BLACK_CARD_CLIPS = ['/sounds/blackcard/blackcard1.m4a', '/sounds/blackcard/blackcard2.m4a']
+const COLOR_CLIPS = {
+  red: '/sounds/colors/red.m4a',
+  yellow: '/sounds/colors/yellow.m4a',
+  green: '/sounds/colors/green.m4a',
+  blue: '/sounds/colors/blue.m4a',
+}
 
-function playRandomClip(clips, volume = 0.85) {
-  if (muted) return
+function playClip(src, volume = 0.85) {
+  if (muted || !src) return
   try {
-    const src = clips[Math.floor(Math.random() * clips.length)]
     const audio = new Audio(src)
     audio.volume = volume
     const p = audio.play()
@@ -105,6 +112,10 @@ function playRandomClip(clips, volume = 0.85) {
   } catch {
     /* audio is best-effort */
   }
+}
+
+function playRandomClip(clips, volume = 0.85) {
+  playClip(clips[Math.floor(Math.random() * clips.length)], volume)
 }
 
 export const sfx = {
@@ -122,10 +133,23 @@ export const sfx = {
       }
     })
   },
+  // A forced +2/+4 penalty draw (single or stacked) — distinct from a
+  // regular voluntary draw.
+  drawStack() {
+    playRandomClip(DRAW_STACK_CLIPS)
+    run((c) => {
+      noiseBurst(c, { duration: 0.07, gain: 0.08, filterFreq: 1600 })
+    })
+  },
   invalid() {
     run((c) => {
       tone(c, { freq: 180, duration: 0.16, type: 'sawtooth', gain: 0.12, glideTo: 90 })
     })
+  },
+  // Calls out the new color whenever it changes (a card matching it is
+  // played, or a Wild/Wild+4 picks it).
+  colorChange(color) {
+    playClip(COLOR_CLIPS[color])
   },
   turnYours() {
     run((c) => {
@@ -169,6 +193,10 @@ export const sfx = {
     run((c) => {
       ;[523, 659, 784, 988].forEach((f, i) => tone(c, { freq: f, start: i * 0.05, duration: 0.1, type: 'sine', gain: 0.09 }))
     })
+  },
+  // A Wild +4 specifically (not a plain Wild) being played, on top of its other cues.
+  blackCard() {
+    playRandomClip(BLACK_CARD_CLIPS)
   },
   roundWin() {
     run((c) => {

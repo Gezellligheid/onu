@@ -458,6 +458,8 @@ function triggerBlockedFlash() {
 // ---- Sound + fly-animation reactions to remote/local state changes ----
 let lastSeenUpdate = game.value?.updatedAt ?? null
 let lastSeenTurnFor = null
+let wasStackPenaltyDraw = false
+let lastSeenColor = game.value?.currentColor ?? null
 
 const PLAY_TYPES = new Set(['play', 'skip', 'reverse', 'stack-draw2', 'stack-wild4', 'wild'])
 
@@ -468,9 +470,30 @@ watch(
     if (!g || g.updatedAt === lastSeenUpdate) return
     lastSeenUpdate = g.updatedAt
 
-    if (g.lastDraw) sfx.cardDraw(g.lastDraw.cardIds.length)
-
     const la = g.lastAction
+    const isStackPenaltyDraw = la?.type === 'forced-draw' || la?.type === 'forced-draw-partial'
+
+    if (g.lastDraw) {
+      // A forced +2/+4 draw plays its cards one at a time (each its own fly
+      // animation), but the sound should announce the penalty once, not
+      // once per card — only fire on the first card of the sequence.
+      if (isStackPenaltyDraw) {
+        if (!wasStackPenaltyDraw) sfx.drawStack()
+      } else {
+        sfx.cardDraw(g.lastDraw.cardIds.length)
+      }
+    }
+    wasStackPenaltyDraw = isStackPenaltyDraw
+
+    if (g.currentColor && g.currentColor !== lastSeenColor) {
+      sfx.colorChange(g.currentColor)
+    }
+    lastSeenColor = g.currentColor
+
+    if (la?.card?.type === 'wild4' && PLAY_TYPES.has(la.type)) {
+      sfx.blackCard()
+    }
+
     switch (la?.type) {
       case 'play':
         sfx.cardPlay()
