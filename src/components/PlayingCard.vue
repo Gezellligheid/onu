@@ -10,13 +10,14 @@ const props = defineProps({
   urgent: { type: Boolean, default: false }, // "you must stack this" ring
   flash: { type: String, default: '' }, // '', 'yellow', 'red' — strobing "you must draw" border
   animateIn: { type: String, default: '' }, // '', 'deal', 'flip', 'fly', 'pop'
+  tintColor: { type: String, default: '' }, // hex color: recolors a Wild/Wild+4's white artwork once a color has been chosen
 })
 
 const sizes = {
   sm: 'w-10 h-14 rounded-lg',
   md: 'w-16 h-24 rounded-xl',
-  lg: 'w-40 h-56 rounded-2xl', // center piles
-  xl: 'w-48 h-72 rounded-2xl', // your own hand
+  lg: 'w-[112px] h-[157px] rounded-2xl', // center piles
+  xl: 'w-[134px] h-[202px] rounded-2xl', // your own hand
 }
 
 const enterAnim = {
@@ -59,33 +60,66 @@ const altText = computed(() => {
   if (c.type === 'wild4') return 'Wild Draw Four'
   return `${c.color} ${c.label}`
 })
+
+const showTint = computed(() => props.card && (props.card.type === 'wild' || props.card.type === 'wild4') && props.tintColor)
 </script>
 
 <template>
   <div
-    class="relative select-none card-shadow overflow-hidden border-2 border-white/80 transition-transform"
+    class="relative select-none transition-transform"
     :class="[
       sizes[size],
-      bgClass,
-      enterAnim[animateIn],
       playable && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
-      disabled ? 'brightness-[0.45] saturate-[0.7]' : '',
       flash === 'red'
-        ? 'animate-flash-red border-uno-red'
+        ? 'animate-flash-red'
         : flash === 'yellow'
-          ? 'animate-flash-yellow border-uno-yellow'
+          ? 'animate-flash-yellow'
           : urgent
-            ? 'animate-stack-pulse border-uno-red'
+            ? 'animate-stack-pulse'
             : glow
-              ? 'animate-ring-pulse border-uno-yellow'
+              ? 'animate-ring-pulse'
               : '',
     ]"
   >
-    <template v-if="!card">
-      <div class="flex h-full w-full items-center justify-center rounded-[inherit] bg-slate-900">
-        <div class="h-2/3 w-2/3 rounded-full border-4 border-uno-red/80"></div>
-      </div>
-    </template>
-    <img v-else :src="imageSrc" :alt="altText" draggable="false" class="h-full w-full rounded-[inherit] object-cover" />
+    <!--
+      The glow/flash rings above live on this OUTER element on purpose: the
+      inner element below needs overflow-hidden to clip the artwork to its
+      rounded corners, but overflow-hidden on an element also clips that
+      same element's own box-shadow — which silently ate the "you must
+      draw" flash border. Keeping the shadow on an unclipped ancestor fixes
+      that.
+    -->
+    <div
+      class="card-shadow relative h-full w-full overflow-hidden rounded-[inherit] border-2"
+      :class="[
+        bgClass,
+        enterAnim[animateIn],
+        disabled ? 'brightness-[0.45] saturate-[0.7]' : '',
+        flash === 'red'
+          ? 'border-uno-red'
+          : flash === 'yellow'
+            ? 'border-uno-yellow'
+            : urgent
+              ? 'border-uno-red'
+              : glow
+                ? 'border-uno-yellow'
+                : 'border-white/80',
+      ]"
+    >
+      <template v-if="!card">
+        <div class="flex h-full w-full items-center justify-center rounded-[inherit] bg-slate-900">
+          <div class="h-2/3 w-2/3 rounded-full border-4 border-uno-red/80"></div>
+        </div>
+      </template>
+      <template v-else>
+        <img :src="imageSrc" :alt="altText" draggable="false" class="h-full w-full rounded-[inherit] object-cover" />
+        <div
+          v-if="showTint"
+          class="pointer-events-none absolute inset-0 rounded-[inherit]"
+          style="mix-blend-mode: color"
+          :style="{ backgroundColor: tintColor }"
+        ></div>
+      </template>
+    </div>
   </div>
 </template>

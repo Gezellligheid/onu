@@ -38,6 +38,21 @@ function flashError(err) {
 }
 
 const myHand = computed(() => game.value.hands[uid.value] || [])
+
+// Display-only sort (color, then rank) so your hand stays organized as you
+// draw/play — the underlying array order (which drawnCardId relies on to
+// find "the card I just drew") is untouched.
+const HAND_SORT_COLOR = { red: 0, yellow: 1, green: 2, blue: 3, black: 4 }
+const HAND_SORT_TYPE = { number: 0, skip: 1, reverse: 2, draw2: 3, wild: 4, wild4: 5 }
+const sortedHand = computed(() =>
+  [...myHand.value].sort((a, b) => {
+    const byColor = HAND_SORT_COLOR[a.color] - HAND_SORT_COLOR[b.color]
+    if (byColor !== 0) return byColor
+    const byType = HAND_SORT_TYPE[a.type] - HAND_SORT_TYPE[b.type]
+    if (byType !== 0) return byType
+    return a.type === 'number' ? a.value - b.value : 0
+  }),
+)
 const top = computed(() => engine.topCard(game.value))
 const myTurn = computed(() => engine.isMyTurn(game.value, uid.value))
 const actionable = computed(() => (game.value ? engine.actionableUid(game.value) : null))
@@ -57,8 +72,8 @@ function isCardPlayable(card) {
 // Your own hand fans out in a slight arc, center raised — like cards held
 // in two hands — instead of a flat overlapping row. Spacing/curve/rotation
 // all shrink as the hand grows so a big hand gets denser, not wider.
-const HAND_MAX_SPACING = 116
-const HAND_ARC_SPREAD = 520
+const HAND_MAX_SPACING = 81
+const HAND_ARC_SPREAD = 364
 function handCardStyle(i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
@@ -66,7 +81,7 @@ function handCardStyle(i, total) {
   const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / total)
   const rotate = offset * Math.min(6, 46 / total)
   const x = offset * spacing
-  const y = offset * offset * Math.min(4.8, 32 / total)
+  const y = offset * offset * Math.min(3.4, 22 / total)
   return {
     transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg)`,
     zIndex: i,
@@ -75,7 +90,7 @@ function handCardStyle(i, total) {
 const handFanWidth = computed(() => {
   const n = myHand.value.length
   const spacing = Math.min(HAND_MAX_SPACING, HAND_ARC_SPREAD / Math.max(n, 1))
-  return Math.max(n - 1, 0) * spacing + 220
+  return Math.max(n - 1, 0) * spacing + 160
 })
 
 const noPlayableCards = computed(() => {
@@ -189,12 +204,12 @@ function arrowHeadPoints(cx, cy, rx, ry, endDeg, size = 13) {
   const b2y = ey - ny * size * 0.55
   return `${tipX},${tipY} ${b1x},${b1y} ${b2x},${b2y}`
 }
-const DIR_CX = 210
-const DIR_CY = 133
-const DIR_RX = 198
-const DIR_RY = 123
+const DIR_CX = 220
+const DIR_CY = 140
+const DIR_RX = 206
+const DIR_RY = 129
 const directionArcPath = ellipseArcPath(DIR_CX, DIR_CY, DIR_RX, DIR_RY, -35, 250)
-const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 28)
+const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 38)
 
 function onCardClick(card) {
   unlockAudio()
@@ -306,9 +321,9 @@ function setSeatRef(id, el) {
 // discard/draw wrappers are wider than a single card, so a "fly to hand"
 // animation would balloon up to the width of the whole hand panel instead
 // of landing at normal card size.
-const HAND_CARD_PX = 192 // matches PlayingCard size="xl" used for my own hand
+const HAND_CARD_PX = 134 // matches PlayingCard size="xl" used for my own hand
 const SEAT_CARD_PX = 40 // matches CardFan's size="sm"
-const PILE_CARD_PX = 160 // matches PlayingCard size="lg" used for the piles
+const PILE_CARD_PX = 112 // matches PlayingCard size="lg" used for the piles
 
 function endpointFor(playerUid) {
   if (playerUid === uid.value) return { el: myHandEl.value, size: HAND_CARD_PX, alignLeft: false }
@@ -596,15 +611,15 @@ onBeforeUnmount(() => {
           </span>
         </p>
 
-        <div class="relative flex items-center justify-center" style="width: 420px; height: 266px">
+        <div class="relative flex items-center justify-center" style="width: 440px; height: 280px">
           <!-- Big circular direction arrow, mirrored when play reverses -->
           <svg
-            viewBox="0 0 420 266"
+            viewBox="0 0 440 280"
             class="pointer-events-none absolute inset-0 h-full w-full transition-transform duration-500"
             :class="game.direction === -1 ? '[transform:scaleX(-1)]' : ''"
           >
-            <path :d="directionArcPath" fill="none" stroke="#facc15" stroke-width="7" stroke-linecap="round" opacity="0.8" />
-            <polygon :points="directionArrowPoints" fill="#facc15" opacity="0.95" />
+            <path :d="directionArcPath" fill="none" stroke="#facc15" stroke-width="10" stroke-linecap="round" opacity="0.85" />
+            <polygon :points="directionArrowPoints" fill="#facc15" opacity="1" />
           </svg>
 
           <div class="relative flex items-center gap-5">
@@ -627,7 +642,13 @@ onBeforeUnmount(() => {
 
             <div class="flex flex-col items-center gap-1" ref="discardPileEl">
               <div class="relative rounded-xl" :style="{ boxShadow: `0 0 0 3px ${COLOR_HEX[game.currentColor]}` }">
-                <PlayingCard :card="top" size="lg" animate-in="flip" :key="top?.id" />
+                <PlayingCard
+                  :card="top"
+                  size="lg"
+                  animate-in="flip"
+                  :tint-color="COLOR_HEX[game.currentColor]"
+                  :key="top?.id"
+                />
               </div>
               <span class="text-[11px] capitalize text-slate-500">{{ game.currentColor }}</span>
             </div>
@@ -650,7 +671,7 @@ onBeforeUnmount(() => {
     </p>
 
     <!-- Spacer so page content isn't hidden behind the floating hand -->
-    <div class="h-[420px]"></div>
+    <div class="h-[300px]"></div>
 
     <!-- My hand: floats freely in front of everything, no boxed panel -->
     <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
@@ -667,12 +688,12 @@ onBeforeUnmount(() => {
           UNO!
         </button>
       </div>
-      <div class="pointer-events-auto relative" :style="{ width: `${handFanWidth}px`, height: '360px' }" ref="myHandEl">
+      <div class="pointer-events-auto relative" :style="{ width: `${handFanWidth}px`, height: '260px' }" ref="myHandEl">
         <div
-          v-for="(card, idx) in myHand"
+          v-for="(card, idx) in sortedHand"
           :key="card.id"
-          class="absolute left-1/2 top-6 origin-bottom hover:z-30"
-          :style="handCardStyle(idx, myHand.length)"
+          class="absolute left-1/2 top-4 origin-bottom transition-transform duration-300 hover:z-30"
+          :style="handCardStyle(idx, sortedHand.length)"
         >
           <PlayingCard
             :card="card"

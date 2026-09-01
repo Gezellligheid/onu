@@ -68,7 +68,7 @@ function initials(n) {
     <button
       v-if="canCatch"
       type="button"
-      class="rounded-full bg-uno-red px-2 py-0.5 text-[10px] font-bold text-white shadow hover:bg-red-600"
+      class="animate-pulse-glow rounded-full bg-uno-red px-4 py-1.5 text-sm font-bold text-white shadow-lg hover:bg-red-600"
       @click="$emit('catch')"
     >
       Catch!
