@@ -21,22 +21,36 @@ export function isPlayable(card, top, currentColor) {
   return false
 }
 
+/**
+ * House rule: stacking. While a +2/+4 chain is pending, the only legal
+ * plays are cards of that same stack type (any color) — everything else,
+ * including the color/number matching rules above, is suspended until the
+ * stack is resolved by someone drawing it.
+ */
+export function isPlayableNow(card, state) {
+  if (state.pendingDraw) return card.type === state.pendingDraw.type
+  return isPlayable(card, topCard(state), state.currentColor)
+}
+
 function reshuffleFromDiscard(state) {
   const top = state.discardPile[state.discardPile.length - 1]
-  const rest = state.discardPile.slice(0, -1).map((c) => ({ ...c, color: c.color === 'black' ? 'black' : c.color }))
-  // Wild cards return to the deck as wild (color reset happens naturally since we never mutate .color on wilds)
+  const rest = state.discardPile.slice(0, -1)
   state.drawPile = shuffle(rest)
   state.discardPile = top ? [top] : []
 }
 
+/**
+ * The draw pile is effectively unlimited: once it and the discard pile both
+ * run dry (only possible in freak long stacking chains), a brand new
+ * shuffled 108-card deck is manufactured on the fly so a draw can never
+ * fail.
+ */
 function drawOne(state) {
   if (state.drawPile.length === 0) {
-    if (state.discardPile.length <= 1) {
-      // Extremely rare: nothing left to reshuffle. Manufacture a fresh deck minus the top card.
-      const fresh = shuffle(buildDeck())
-      state.drawPile = fresh
-    } else {
+    if (state.discardPile.length > 1) {
       reshuffleFromDiscard(state)
+    } else {
+      state.drawPile = shuffle(buildDeck())
     }
   }
   return state.drawPile.pop()
@@ -91,11 +105,13 @@ export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, score
     currentColor: starter.color === 'black' ? COLORS[Math.floor(Math.random() * 4)] : starter.color,
     currentIndex: roundNumber > 1 ? (roundNumber - 1) % playerOrder.length : 0,
     direction: 1,
+    pendingDraw: null,
     unoCalled: Object.fromEntries(playerOrder.map((uid) => [uid, false])),
     scores: nextScores,
     targetScore,
     roundNumber,
     lastAction: { type: 'round-start', message: 'New round dealt.' },
+    lastDraw: null,
     roundWinner: null,
     roundPoints: 0,
     gameWinner: null,
@@ -118,6 +134,8 @@ function applyStarterEffect(state, starter) {
     if (n === 2) state.currentIndex = (state.currentIndex + 1) % n
     state.lastAction = { type: 'starter-reverse', message: 'Play starts in reverse order.' }
   } else if (starter.type === 'draw2') {
+    // The very first flip applies immediately — nobody has had a turn yet
+    // to stack a Draw Two of their own against it.
     const firstId = currentPlayerId(state)
     for (let i = 0; i < DRAW_TWO_PENALTY; i += 1) state.hands[firstId].push(drawOne(state))
     state.currentIndex = (state.currentIndex + 1) % n
@@ -140,7 +158,9 @@ export function chooseStarterColor(state, uid, color) {
   if (!COLORS.includes(color)) throw new Error('Invalid color.')
   next.currentColor = color
   next.pendingColorChoice = null
-  next.lastAction = { type: 'color-chosen', message: `${nameFor(next, uid)} chose ${color}.` }
+  next.lastDraw = null
+  next.lastAction = { type: 'color-chosen', by: uid, message: `${nameFor(next, uid)} chose ${color}.` }
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -152,15 +172,21 @@ export function playCard(state, uid, cardId, chosenColor) {
   const next = clone(state)
   if (next.status !== 'playing') throw new Error('Round is not active.')
   if (next.pendingColorChoice) throw new Error('Waiting on starting color choice.')
-  if (currentPlayerId(next) !== uid) throw new Error("It is not your turn.")
+  if (currentPlayerId(next) !== uid) throw new Error('It is not your turn.')
 
   const hand = next.hands[uid]
   const cardIdx = hand.findIndex((c) => c.id === cardId)
   if (cardIdx === -1) throw new Error('Card not in hand.')
   const card = hand[cardIdx]
-  const top = topCard(next)
 
-  if (!isPlayable(card, top, next.currentColor)) throw new Error('Card does not match color, number, or type.')
+  if (next.pendingDraw) {
+    if (card.type !== next.pendingDraw.type) {
+      const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
+      throw new Error(`You must stack another ${label} or draw ${next.pendingDraw.count} cards.`)
+    }
+  } else if (!isPlayable(card, topCard(next), next.currentColor)) {
+    throw new Error('Card does not match color, number, or type.')
+  }
   if ((card.type === 'wild' || card.type === 'wild4') && !COLORS.includes(chosenColor)) {
     throw new Error('Choose a color for the wild card.')
   }
@@ -168,19 +194,22 @@ export function playCard(state, uid, cardId, chosenColor) {
   hand.splice(cardIdx, 1)
   next.discardPile.push(card)
   next.awaitingDrawDecision = null
-
-  const n = next.playerOrder.length
+  next.lastDraw = null
   next.currentColor = card.color === 'black' ? chosenColor : card.color
 
-  // Hand empty -> round over, scoring happens before any turn advance.
+  // Hand empty -> round over, scoring happens before any turn advance (and
+  // before any pending stack would apply to whoever's next).
   if (hand.length === 0) {
     finishRound(next, uid)
+    next.updatedAt = Date.now()
     return next
   }
 
   if (hand.length === 1) {
     next.unoCalled[uid] = false
   }
+
+  const n = next.playerOrder.length
 
   if (card.type === 'number') {
     stepIndex(next, 1)
@@ -193,28 +222,35 @@ export function playCard(state, uid, cardId, chosenColor) {
     stepIndex(next, n === 2 ? 2 : 1)
     next.lastAction = { type: 'reverse', by: uid, card, message: `${nameFor(next, uid)} played Reverse.` }
   } else if (card.type === 'draw2') {
+    const stacked = !!next.pendingDraw
+    next.pendingDraw = { type: 'draw2', count: (next.pendingDraw?.count ?? 0) + DRAW_TWO_PENALTY }
     stepIndex(next, 1)
-    const victim = currentPlayerId(next)
-    for (let i = 0; i < DRAW_TWO_PENALTY; i += 1) next.hands[victim].push(drawOne(next))
-    stepIndex(next, 1)
-    next.lastAction = { type: 'draw2', by: uid, target: victim, card, message: `${nameFor(next, victim)} draws 2 and is skipped.` }
+    next.lastAction = {
+      type: 'stack-draw2',
+      by: uid,
+      card,
+      message: stacked
+        ? `${nameFor(next, uid)} stacks +2 (now ${next.pendingDraw.count})!`
+        : `${nameFor(next, uid)} played +2.`,
+    }
   } else if (card.type === 'wild') {
     stepIndex(next, 1)
     next.lastAction = { type: 'wild', by: uid, card, message: `${nameFor(next, uid)} played Wild (${chosenColor}).` }
   } else if (card.type === 'wild4') {
-    stepIndex(next, 1)
-    const victim = currentPlayerId(next)
-    for (let i = 0; i < WILD_DRAW_FOUR_PENALTY; i += 1) next.hands[victim].push(drawOne(next))
+    const stacked = !!next.pendingDraw
+    next.pendingDraw = { type: 'wild4', count: (next.pendingDraw?.count ?? 0) + WILD_DRAW_FOUR_PENALTY }
     stepIndex(next, 1)
     next.lastAction = {
-      type: 'wild4',
+      type: 'stack-wild4',
       by: uid,
-      target: victim,
       card,
-      message: `${nameFor(next, victim)} draws 4 and is skipped (${chosenColor}).`,
+      message: stacked
+        ? `${nameFor(next, uid)} stacks +4 (now ${next.pendingDraw.count}, ${chosenColor})!`
+        : `${nameFor(next, uid)} played Wild +4 (${chosenColor}).`,
     }
   }
 
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -242,6 +278,15 @@ function finishRound(state, winnerId) {
   }
 }
 
+/**
+ * Draws for `uid`. Two distinct modes:
+ *  - A pending +2/+4 stack: draws the whole accumulated total at once and
+ *    the turn passes immediately (no choice to play — the stack already
+ *    gave them the chance to counter it).
+ *  - A normal turn with no playable card: house rule — keep drawing, one
+ *    card at a time, until a playable card turns up (deck is unlimited, so
+ *    this always terminates). The final card may then be played or kept.
+ */
 export function drawCard(state, uid) {
   const next = clone(state)
   if (next.status !== 'playing') throw new Error('Round is not active.')
@@ -249,17 +294,50 @@ export function drawCard(state, uid) {
   if (currentPlayerId(next) !== uid) throw new Error('It is not your turn.')
   if (next.awaitingDrawDecision) throw new Error('Resolve your drawn card first.')
 
-  const card = drawOne(next)
-  next.hands[uid].push(card)
-  const playable = isPlayable(card, topCard(next), next.currentColor)
+  if (next.pendingDraw) {
+    const { count, type } = next.pendingDraw
+    const drawn = []
+    for (let i = 0; i < count; i += 1) drawn.push(drawOne(next))
+    next.hands[uid].push(...drawn)
+    next.pendingDraw = null
+    next.lastDraw = { id: Date.now(), by: uid, cardIds: drawn.map((c) => c.id), forced: true }
+    stepIndex(next, 1)
+    next.lastAction = {
+      type: 'forced-draw',
+      by: uid,
+      message: `${nameFor(next, uid)} draws ${count} (${type === 'wild4' ? 'Wild +4' : '+2'} stack) and is skipped.`,
+    }
+    next.updatedAt = Date.now()
+    return next
+  }
 
-  if (playable) {
+  const drawn = []
+  let last = null
+  let guard = 0
+  do {
+    last = drawOne(next)
+    next.hands[uid].push(last)
+    drawn.push(last)
+    guard += 1
+  } while (!isPlayable(last, topCard(next), next.currentColor) && guard < 500)
+
+  next.lastDraw = { id: Date.now(), by: uid, cardIds: drawn.map((c) => c.id), forced: false }
+
+  if (isPlayable(last, topCard(next), next.currentColor)) {
     next.awaitingDrawDecision = uid
-    next.lastAction = { type: 'draw', by: uid, message: `${nameFor(next, uid)} drew a card.` }
+    next.lastAction = {
+      type: 'draw',
+      by: uid,
+      message:
+        drawn.length === 1
+          ? `${nameFor(next, uid)} drew a card.`
+          : `${nameFor(next, uid)} drew ${drawn.length} cards before finding a playable one.`,
+    }
   } else {
     stepIndex(next, 1)
-    next.lastAction = { type: 'draw-pass', by: uid, message: `${nameFor(next, uid)} drew a card and passed.` }
+    next.lastAction = { type: 'draw-pass', by: uid, message: `${nameFor(next, uid)} drew ${drawn.length} and passed.` }
   }
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -269,8 +347,10 @@ export function passTurn(state, uid) {
   if (currentPlayerId(next) !== uid) throw new Error('It is not your turn.')
   if (next.awaitingDrawDecision !== uid) throw new Error('Nothing to pass on.')
   next.awaitingDrawDecision = null
+  next.lastDraw = null
   stepIndex(next, 1)
   next.lastAction = { type: 'pass', by: uid, message: `${nameFor(next, uid)} passed.` }
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -280,6 +360,7 @@ export function callUno(state, uid) {
   if (!next.hands[uid]) throw new Error('Unknown player.')
   next.unoCalled[uid] = true
   next.lastAction = { type: 'uno-call', by: uid, message: `${nameFor(next, uid)} called UNO!` }
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -291,14 +372,18 @@ export function catchUno(state, catcherId, targetId) {
   if (!hand || hand.length !== 1) throw new Error('That player is not sitting on one card.')
   if (next.unoCalled[targetId]) throw new Error('They already called UNO.')
 
-  for (let i = 0; i < NO_UNO_CALL_PENALTY; i += 1) hand.push(drawOne(next))
+  const drawn = []
+  for (let i = 0; i < NO_UNO_CALL_PENALTY; i += 1) drawn.push(drawOne(next))
+  hand.push(...drawn)
   next.unoCalled[targetId] = true
+  next.lastDraw = { id: Date.now(), by: targetId, cardIds: drawn.map((c) => c.id), forced: true }
   next.lastAction = {
     type: 'uno-caught',
     by: catcherId,
     target: targetId,
     message: `${nameFor(next, catcherId)} caught ${nameFor(next, targetId)} without UNO! +2 cards.`,
   }
+  next.updatedAt = Date.now()
   return next
 }
 
@@ -313,6 +398,14 @@ export function startNextRound(state) {
 
 export function isMyTurn(state, uid) {
   return state.status === 'playing' && !state.pendingColorChoice && currentPlayerId(state) === uid
+}
+
+/** Whoever the game is currently waiting on to take *some* action. */
+export function actionableUid(state) {
+  if (state.status !== 'playing') return null
+  if (state.pendingColorChoice) return state.pendingColorChoice
+  if (state.awaitingDrawDecision) return state.awaitingDrawDecision
+  return currentPlayerId(state)
 }
 
 export { currentPlayerId }

@@ -1,4 +1,6 @@
 <script setup>
+import CardFan from './CardFan.vue'
+
 defineProps({
   name: { type: String, required: true },
   cardCount: { type: Number, required: true },
@@ -6,6 +8,7 @@ defineProps({
   score: { type: Number, default: 0 },
   vulnerable: { type: Boolean, default: false }, // 1 card, hasn't called UNO
   canCatch: { type: Boolean, default: false },
+  waitingOn: { type: Boolean, default: false }, // must respond to a pending draw stack
 })
 defineEmits(['catch'])
 
@@ -20,13 +23,14 @@ function initials(n) {
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-1">
+  <div class="flex flex-col items-center gap-0.5">
+    <CardFan :count="cardCount" />
     <div class="relative">
       <div
         class="flex h-12 w-12 items-center justify-center rounded-full border-2 font-display text-sm font-bold transition"
         :class="
           isTurn
-            ? 'border-uno-yellow bg-uno-yellow/20 text-uno-yellow animate-pulse-glow'
+            ? 'border-uno-yellow bg-uno-yellow/20 text-uno-yellow animate-turn-ring'
             : 'border-white/20 bg-slate-800 text-slate-300'
         "
       >
@@ -39,15 +43,25 @@ function initials(n) {
       </span>
       <span
         v-if="vulnerable"
-        class="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-uno-red px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow"
+        class="absolute -top-1.5 left-1/2 -translate-x-1/2 animate-pulse-glow rounded-full bg-uno-red px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow"
       >
         UNO!
       </span>
+      <span
+        v-if="isTurn"
+        class="absolute -bottom-3 left-1/2 -translate-x-1/2 text-uno-yellow drop-shadow"
+        aria-hidden="true"
+      >
+        ▲
+      </span>
     </div>
     <div class="text-center leading-tight">
-      <p class="max-w-[6rem] truncate text-xs font-semibold text-slate-200">{{ name }}</p>
+      <p class="max-w-[6rem] truncate text-xs font-semibold" :class="isTurn ? 'text-uno-yellow' : 'text-slate-200'">
+        {{ name }}
+      </p>
       <p class="text-[10px] text-slate-500">{{ score }} pts</p>
     </div>
+    <p v-if="waitingOn" class="animate-pulse text-[10px] font-bold text-uno-red">must respond!</p>
     <button
       v-if="canCatch"
       type="button"

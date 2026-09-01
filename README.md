@@ -7,7 +7,10 @@ Real-time multiplayer UNO for you and your friends — built with Vue 3, Tailwin
 - **Invite-code multiplayer** — one player creates a room and gets a short code (e.g. `K7QXM`); everyone else joins by typing it in. No lobbies to browse, no accounts to create.
 - **Firebase anonymous auth** — sign-in is just a display name, backed by Firebase Anonymous Authentication under the hood.
 - **Real-time sync** — game state lives in Firestore and syncs to every player instantly via `onSnapshot` listeners.
-- **Full official ruleset** (see [Rules implemented](#rules-implemented) below), including UNO calling/catching.
+- **Round table layout** — opponents are seated in an arc around the discard/draw piles, like sitting around a real table, with their hands shown as fanned card backs (so you always see at a glance how many cards everyone's holding).
+- **Real card artwork**, animated dealing/playing/drawing, and synthesized sound effects (see [Look & feel](#look--feel)).
+- **Clear turn & playable-card cues** — the active player glows, your playable cards get a pulsing highlight, and the draw pile tells you when you must draw.
+- **House rules**: stacking +2/+4 cards, draw-until-playable, an unlimited draw pile, and a 10-second AFK auto-play (see [Rules implemented](#rules-implemented)).
 - **Classic UNO scoring** — first to 200/300/500 points wins the match (see [Scoring](#scoring--pointing-system)).
 
 ## Tech stack
@@ -69,20 +72,28 @@ This is designed for casual games among friends, not tournament-grade anti-cheat
 
 ## Rules implemented
 
-Based on the [official rules](https://www.unorules.com/):
+Based on the [official rules](https://www.unorules.com/), plus a few common house rules called out below:
 
-- 108-card deck: four colors × (one 0, two each of 1–9, two Skip, two Reverse, two Draw Two) + 4 Wild + 4 Wild Draw Four.
+- 108-card deck: four colors × (one 0, two each of 1–9, two Skip, two Reverse, two Draw Two) + 4 Wild + 4 Wild Draw Four. The **draw pile is effectively unlimited** — if it and the discard pile both run dry (only realistic during a long stacking chain), a fresh shuffled deck is generated on the fly so a draw can never fail.
 - 7 cards dealt to each player (2–10 players supported).
 - Play must match the top card's color, number, or symbol; Wilds are always playable.
 - **Skip** — next player loses their turn.
 - **Reverse** — reverses turn order (acts as a Skip in 2-player games).
-- **Draw Two** — next player draws 2 cards and loses their turn.
+- **Draw Two / Wild Draw Four stacking (house rule)** — instead of drawing immediately, the next player may play another card of the *same* type (any color) to add to the pile and pass it along the chain grows (+2, +4, +6, …) until someone can't or won't stack, at which point they draw the whole accumulated total and their turn ends. While a stack is pending, only matching stack cards are legal — everything else is blocked until it's resolved.
 - **Wild** — play any time; choose the next color.
-- **Wild Draw Four** — next player draws 4 cards and loses their turn; choose the next color. (Enforcement of "you may only play this if you have no matching color" is honor-based, same as physical play — not blocked by the app.)
-- If you can't play, you draw one card and may immediately play it if it's legal; otherwise your turn passes.
+- **Wild Draw Four** — starts (or extends) a stacking chain as above; choose the next color. (Enforcement of "you may only play this if you have no matching color" is honor-based, same as physical play — not blocked by the app.)
+- **Draw-until-playable (house rule)** — if you have no legal play, drawing keeps going, one card at a time, until you draw something playable (the unlimited deck guarantees this always terminates). You may then play that card or keep it and pass.
 - **Calling UNO** — a "UNO!" button appears once you're down to one card. If you don't call it, any other player can hit **Catch!** to make you draw 2 penalty cards.
+- **10-second AFK auto-play** — if whoever needs to act (play/draw/pass/pick a color) hasn't done anything for 10 seconds, the app plays a random legal move for them so the game never stalls on an idle player. A countdown appears in the last few seconds before it kicks in.
 - A round ends the instant a player empties their hand; a fresh round is dealt automatically for the next hand.
-- Illegal starting flips are handled per the rules (a Wild Draw Four starter is reshuffled back in; Draw Two/Skip/Reverse/Wild starters apply their effect to the first turn).
+- Illegal starting flips are handled per the rules (a Wild Draw Four starter is reshuffled back in; Draw Two/Skip/Reverse/Wild starters apply their effect to the first turn, without a stacking opportunity since no one's had a turn yet).
+
+## Look & feel
+
+- **Card artwork** lives in `public/cards/` (`{color}-{value|skip|reverse|draw2}.jpg`, plus `wild.jpg` / `wild-draw4.jpg`) and is rendered by [`PlayingCard.vue`](src/components/PlayingCard.vue); the face-down back is drawn with CSS so no back-of-card image is needed.
+- **Animations** — cards deal/draw in with a bounce, the discard pile flips when the top card changes, the draw pile pops on every draw, playable cards get a soft pulsing ring (a red pulsing ring instead when you must respond to a +2/+4 stack), and an invalid action shakes your hand.
+- **Sound effects** are synthesized at runtime with the Web Audio API (see [`src/lib/sound.js`](src/lib/sound.js)) rather than downloaded audio files — this avoids any licensing/attribution questions and keeps the app fully offline-capable. A mute toggle sits in the top-right of the game screen and the preference persists via `localStorage`.
+- **Turn clarity** — the whole table gets a soft glow on your turn, the active seat's avatar has a pulsing ring and a little pointer under it, and a banner in the center always says exactly what's happening ("Your turn", "X must respond to the +6 stack!", "Choose a color!", etc). The draw pile itself labels what it wants ("Draw!" or "Draw 4!") whenever you have no other option.
 
 ## Scoring / pointing system
 
@@ -101,10 +112,12 @@ When a player goes out, they're awarded the **sum of every other player's remain
 
 ```
 src/
-  lib/uno/         pure game engine: deck, rules, scoring (no Vue/Firebase deps)
+  lib/uno/         pure game engine: deck, rules, stacking, scoring (no Vue/Firebase deps)
   lib/room.js       Firestore read/write layer (rooms, transactions, actions)
+  lib/sound.js      synthesized Web Audio SFX engine
   firebase.js       Firebase app/auth/firestore init
   stores/           Pinia stores (auth, room)
-  components/       PlayingCard, PlayerBadge, GameBoard, modals, WaitingRoom
+  components/       PlayingCard, CardFan, PlayerBadge, GameBoard, modals, WaitingRoom
   views/            HomeView (create/join), RoomView (lobby ⇄ game switch)
+public/cards/       UNO card face artwork (see "Look & feel" above)
 ```
