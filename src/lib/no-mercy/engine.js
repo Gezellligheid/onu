@@ -294,7 +294,11 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
     const dumped = []
     for (const c of hand) (c.color === color ? dumped : keep).push(c)
     state.hands[uid] = keep
-    state.discardPile.push(...dumped)
+    // Per the official rule, the extra cards go UNDER the Discard All card,
+    // which stays on top — playCard already pushed it, so pop it off, pile
+    // the dumped cards underneath, then put it back on top.
+    const onTop = state.discardPile.pop()
+    state.discardPile.push(...dumped, onTop)
     state.lastAction = {
       type: 'discardAll',
       by: uid,

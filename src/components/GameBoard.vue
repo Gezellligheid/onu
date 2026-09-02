@@ -783,7 +783,15 @@ watch(
     playSequenced(queue)
 
     if (la?.card && PLAY_TYPES.has(la.type) && discardPileEl.value) {
-      spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card)
+      // Discard All's dumped cards land UNDER it (see the engine) — so its
+      // own fly waits until after their batch lands, landing last/on top
+      // to match. Every other play type flies immediately as before.
+      const dumpedCount = la.type === 'discardAll' ? la.dumpedCards?.length ?? 0 : 0
+      const cardFlyDelay = dumpedCount * 110
+      setTimeout(
+        () => spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card),
+        cardFlyDelay,
+      )
     }
     // Discard All dumps every matching-color card from the hand at once —
     // animate every one of them flying out, not just the card that was played.
