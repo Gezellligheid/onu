@@ -41,7 +41,13 @@ export function setMuted(value) {
   }
 }
 
+// Tracks how far out the furthest scheduled tone/noiseBurst in the
+// *current* run() call reaches, so run() can report back roughly when
+// everything it just scheduled will actually have finished playing.
+let trackingMaxEnd = 0
+
 function tone(c, { freq, start = 0, duration = 0.12, type = 'sine', gain = 0.18, glideTo = null }) {
+  trackingMaxEnd = Math.max(trackingMaxEnd, start + duration + 0.02)
   const osc = c.createOscillator()
   const g = c.createGain()
   osc.type = type
@@ -57,6 +63,7 @@ function tone(c, { freq, start = 0, duration = 0.12, type = 'sine', gain = 0.18,
 }
 
 function noiseBurst(c, { start = 0, duration = 0.1, gain = 0.12, filterFreq = 2000 }) {
+  trackingMaxEnd = Math.max(trackingMaxEnd, start + duration)
   const bufferSize = Math.floor(c.sampleRate * duration)
   const buffer = c.createBuffer(1, bufferSize, c.sampleRate)
   const data = buffer.getChannelData(0)
@@ -77,15 +84,30 @@ function noiseBurst(c, { start = 0, duration = 0.1, gain = 0.12, filterFreq = 20
   src.start(c.currentTime + start)
 }
 
+/**
+ * Runs a batch of tone()/noiseBurst() calls and resolves once the last of
+ * them has actually finished playing — callers use this to know when it's
+ * safe to start the *next* sound rather than guessing a fixed delay.
+ */
 function run(fn) {
-  if (muted) return
-  const c = getCtx()
-  if (!c) return
-  try {
-    fn(c)
-  } catch {
-    /* audio is best-effort */
-  }
+  return new Promise((resolve) => {
+    if (muted) {
+      resolve()
+      return
+    }
+    const c = getCtx()
+    if (!c) {
+      resolve()
+      return
+    }
+    trackingMaxEnd = 0
+    try {
+      fn(c)
+    } catch {
+      /* audio is best-effort */
+    }
+    setTimeout(resolve, Math.max(trackingMaxEnd, 0) * 1000)
+  })
 }
 
 // Recorded clips, layered in alongside their synthesized counterparts below.
@@ -102,31 +124,48 @@ const COLOR_CLIPS = {
   blue: '/sounds/colors/blue.m4a',
 }
 
+const CLIP_FALLBACK_MS = 4000 // safety cap in case 'ended' never fires
+
+/** Plays a clip and resolves once it actually finishes (or errors/caps out). */
 function playClip(src, volume = 0.85) {
-  if (muted || !src) return
-  try {
-    const audio = new Audio(src)
-    audio.volume = volume
-    const p = audio.play()
-    if (p && typeof p.catch === 'function') p.catch(() => {})
-  } catch {
-    /* audio is best-effort */
-  }
+  return new Promise((resolve) => {
+    if (muted || !src) {
+      resolve()
+      return
+    }
+    try {
+      const audio = new Audio(src)
+      audio.volume = volume
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        resolve()
+      }
+      audio.addEventListener('ended', finish)
+      audio.addEventListener('error', finish)
+      const p = audio.play()
+      if (p && typeof p.catch === 'function') p.catch(finish)
+      setTimeout(finish, CLIP_FALLBACK_MS)
+    } catch {
+      resolve()
+    }
+  })
 }
 
 function playRandomClip(clips, volume = 0.85) {
-  playClip(clips[Math.floor(Math.random() * clips.length)], volume)
+  return playClip(clips[Math.floor(Math.random() * clips.length)], volume)
 }
 
 export const sfx = {
   cardPlay() {
-    run((c) => {
+    return run((c) => {
       noiseBurst(c, { duration: 0.08, gain: 0.14, filterFreq: 3000 })
       tone(c, { freq: 520, duration: 0.09, type: 'triangle', gain: 0.1 })
     })
   },
   cardDraw(count = 1) {
-    run((c) => {
+    return run((c) => {
       const n = Math.min(count, 6)
       for (let i = 0; i < n; i += 1) {
         noiseBurst(c, { start: i * 0.09, duration: 0.07, gain: 0.1, filterFreq: 1800 })
@@ -136,88 +175,89 @@ export const sfx = {
   // A forced +2/+4 penalty draw (single or stacked) — distinct from a
   // regular voluntary draw.
   drawStack() {
-    playRandomClip(DRAW_STACK_CLIPS)
-    run((c) => {
-      noiseBurst(c, { duration: 0.07, gain: 0.08, filterFreq: 1600 })
-    })
+    return Promise.all([playRandomClip(DRAW_STACK_CLIPS), run((c) => noiseBurst(c, { duration: 0.07, gain: 0.08, filterFreq: 1600 }))])
   },
   invalid() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 180, duration: 0.16, type: 'sawtooth', gain: 0.12, glideTo: 90 })
     })
   },
   // Calls out the new color whenever it changes (a card matching it is
   // played, or a Wild/Wild+4 picks it).
   colorChange(color) {
-    playClip(COLOR_CLIPS[color])
+    return playClip(COLOR_CLIPS[color])
   },
   turnYours() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 660, duration: 0.1, type: 'sine', gain: 0.14 })
       tone(c, { freq: 880, start: 0.1, duration: 0.14, type: 'sine', gain: 0.14 })
     })
   },
   unoCall() {
-    playRandomClip(UNO_CALL_CLIPS)
-    run((c) => {
-      tone(c, { freq: 700, duration: 0.08, type: 'square', gain: 0.1 })
-      tone(c, { freq: 1000, start: 0.08, duration: 0.12, type: 'square', gain: 0.1 })
-    })
+    return Promise.all([
+      playRandomClip(UNO_CALL_CLIPS),
+      run((c) => {
+        tone(c, { freq: 700, duration: 0.08, type: 'square', gain: 0.1 })
+        tone(c, { freq: 1000, start: 0.08, duration: 0.12, type: 'square', gain: 0.1 })
+      }),
+    ])
   },
   caught() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 400, duration: 0.14, type: 'sawtooth', gain: 0.13, glideTo: 140 })
       noiseBurst(c, { start: 0.05, duration: 0.15, gain: 0.1 })
     })
   },
   skip() {
-    playRandomClip(BLOCKED_CLIPS)
-    run((c) => {
-      tone(c, { freq: 300, duration: 0.1, type: 'square', gain: 0.08, glideTo: 150 })
-    })
+    return Promise.all([
+      playRandomClip(BLOCKED_CLIPS),
+      run((c) => tone(c, { freq: 300, duration: 0.1, type: 'square', gain: 0.08, glideTo: 150 })),
+    ])
   },
   reverse() {
-    playRandomClip(ROTATE_CLIPS)
-    run((c) => {
-      tone(c, { freq: 440, duration: 0.08, type: 'sine', gain: 0.08 })
-      tone(c, { freq: 330, start: 0.07, duration: 0.08, type: 'sine', gain: 0.08 })
-    })
+    return Promise.all([
+      playRandomClip(ROTATE_CLIPS),
+      run((c) => {
+        tone(c, { freq: 440, duration: 0.08, type: 'sine', gain: 0.08 })
+        tone(c, { freq: 330, start: 0.07, duration: 0.08, type: 'sine', gain: 0.08 })
+      }),
+    ])
   },
   stack() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 520, duration: 0.07, type: 'square', gain: 0.12 })
       tone(c, { freq: 650, start: 0.06, duration: 0.09, type: 'square', gain: 0.12 })
     })
   },
   wild() {
-    run((c) => {
+    return run((c) => {
       ;[523, 659, 784, 988].forEach((f, i) => tone(c, { freq: f, start: i * 0.05, duration: 0.1, type: 'sine', gain: 0.09 }))
     })
   },
   // A Wild +4 specifically (not a plain Wild) being played, on top of its other cues.
   blackCard() {
-    playRandomClip(BLACK_CARD_CLIPS)
+    return playRandomClip(BLACK_CARD_CLIPS)
   },
   roundWin() {
-    run((c) => {
+    return run((c) => {
       ;[523, 659, 784, 1046].forEach((f, i) => tone(c, { freq: f, start: i * 0.09, duration: 0.2, type: 'triangle', gain: 0.15 }))
     })
   },
   gameWin() {
-    run((c) => {
+    return run((c) => {
       ;[523, 659, 784, 1046, 1318].forEach((f, i) =>
         tone(c, { freq: f, start: i * 0.11, duration: 0.28, type: 'triangle', gain: 0.16 }),
       )
     })
   },
   autoPlay() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 260, duration: 0.09, type: 'square', gain: 0.09 })
       tone(c, { freq: 220, start: 0.09, duration: 0.09, type: 'square', gain: 0.09 })
     })
   },
   click() {
-    run((c) => {
+    return run((c) => {
       tone(c, { freq: 800, duration: 0.04, type: 'square', gain: 0.06 })
     })
   },

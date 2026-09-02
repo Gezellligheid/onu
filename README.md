@@ -102,10 +102,11 @@ Based on the [official rules](https://www.unorules.com/), plus a few common hous
   - A Wild +4 specifically being played (not a plain Wild) → `public/sounds/blackcard/` (this replaces the generic stacking blip for +4s — no separate "draw" sound plays at the moment a +4 is played, only when it's actually drawn)
   - A forced +2/+4 penalty draw → `public/sounds/drawstack/`, played **once** per penalty regardless of how many cards it draws (not once per card)
 
-  When more than one of these applies to the same event (e.g. a Wild +4 both changes the color and gets its own cue), they play **one after another** with a short gap, not layered on top of each other.
+  When more than one of these applies to the same event (e.g. a Wild +4 both changes the color and gets its own cue), they queue instead of layering: each one is awaited until it's *actually* finished playing, then there's a fixed 0.25s gap before the next starts.
 
   A mute toggle sits in the top-right of the game screen and the preference persists via `localStorage`.
-- **Turn clarity** — the whole table gets a soft glow on your turn, the active seat's avatar has a pulsing ring and a little pointer under it, and a banner in the center always says exactly what's happening ("Your turn", "X must respond to the +6 stack!", "Choose a color!", etc). The draw pile itself labels what it wants ("Draw!" or "Draw 4!") whenever you have no other option.
+- **Turn clarity** — the whole table gets a soft glow on your turn, the active seat's avatar has a pulsing ring, a little pointer, *and* a soft yellow halo behind the whole badge, and a banner in the center always says exactly what's happening ("Your turn", "X must respond to the +6 stack!", "Choose a color!", etc). The draw pile itself labels what it wants ("Draw!" or "Draw 4!") whenever you have no other option.
+- **A 3-second beat between turns** — when the turn actually hands off to someone else (not a continuation, like drawing several cards in a row), everyone gets a synchronized 3-second pause to see what just happened before the new player can act — their hand stays visibly dimmed and unclickable ("Get ready…") until it clears. Doesn't apply to a player still mid-turn (deciding to play a just-drawn card, resolving a forced draw, etc), only to an actual handoff. The AFK timer accounts for it (it doesn't start ticking until the pause is over).
 
 ## Scoring / pointing system
 

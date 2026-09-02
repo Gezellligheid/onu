@@ -64,7 +64,7 @@ const mustRespondToStack = computed(() => !!pendingDraw.value && actionable.valu
 
 function isCardPlayable(card) {
   if (game.value.status !== 'playing' || game.value.pendingColorChoice) return false
-  if (!myTurn.value) return false
+  if (!myTurn.value || turnPauseActive.value) return false
   if (awaitingMyDrawDecision.value) return card.id === drawnCardId.value && engine.isPlayableNow(card, game.value)
   return engine.isPlayableNow(card, game.value)
 }
@@ -260,7 +260,7 @@ async function submitPlay(cardId, color) {
 
 async function onDrawPile() {
   unlockAudio()
-  if (!myTurn.value || awaitingMyDrawDecision.value || game.value.pendingColorChoice) return
+  if (!myTurn.value || awaitingMyDrawDecision.value || game.value.pendingColorChoice || turnPauseActive.value) return
   try {
     await roomStore.drawCard(uid.value)
   } catch (e) {
@@ -462,6 +462,17 @@ let wasStackPenaltyDraw = false
 let lastSeenColor = game.value?.currentColor ?? null
 
 const PLAY_TYPES = new Set(['play', 'skip', 'reverse', 'stack-draw2', 'stack-wild4', 'wild'])
+const SFX_GAP_MS = 250
+
+// Plays queued sfx one at a time: each one is awaited until it actually
+// finishes (not a guessed duration) before the fixed gap, then the next
+// starts. A single-item queue just fires immediately with no gap at all.
+async function playSequenced(queue) {
+  for (let i = 0; i < queue.length; i += 1) {
+    await queue[i]()
+    if (i < queue.length - 1) await new Promise((resolve) => setTimeout(resolve, SFX_GAP_MS))
+  }
+}
 
 watch(
   () => game.value?.updatedAt,
@@ -540,7 +551,7 @@ watch(
     }
     lastSeenColor = g.currentColor
 
-    queue.forEach((fn, i) => (i === 0 ? fn() : setTimeout(fn, i * 260)))
+    playSequenced(queue)
 
     if (la?.card && PLAY_TYPES.has(la.type) && discardPileEl.value) {
       spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card)
@@ -568,6 +579,41 @@ watch(actionable, (id) => {
   }
   lastSeenTurnFor = id
 })
+
+// ---- Turn pause: whenever the turn actually hands off to someone else
+// (not just a continuation, e.g. mid multi-card forced draw), everyone gets
+// a fixed 3s beat to see what just happened before the new player can act.
+// Shared/synchronized off game state, not a per-player thing. ----
+const TURN_PAUSE_MS = 3000
+const turnPauseActive = ref(false)
+const pauseSecondsLeft = ref(null)
+let turnPauseTimeout = null
+let turnPauseInterval = null
+
+function clearTurnPause() {
+  clearTimeout(turnPauseTimeout)
+  clearInterval(turnPauseInterval)
+  turnPauseTimeout = null
+  turnPauseInterval = null
+}
+
+watch(actionable, (newId, oldId) => {
+  if (newId && oldId && newId !== oldId) {
+    clearTurnPause()
+    turnPauseActive.value = true
+    pauseSecondsLeft.value = Math.ceil(TURN_PAUSE_MS / 1000)
+    turnPauseInterval = setInterval(() => {
+      if (pauseSecondsLeft.value !== null) pauseSecondsLeft.value -= 1
+    }, 1000)
+    turnPauseTimeout = setTimeout(() => {
+      turnPauseActive.value = false
+      pauseSecondsLeft.value = null
+      clearTurnPause()
+    }, TURN_PAUSE_MS)
+  }
+})
+
+onBeforeUnmount(clearTurnPause)
 
 // ---- AFK auto-play: if nobody acts within AFK_SECONDS, play a random legal
 // move for them so the game never stalls. Drawing still happens one card at
@@ -642,7 +688,9 @@ watch(
     const target = actionable.value
     if (!target || !g || g.status !== 'playing') return
     const startedAt = g.updatedAt
-    afkSecondsLeft.value = AFK_SECONDS
+    // Includes the 3s turn pause up front — nobody can act during it anyway.
+    const totalMs = TURN_PAUSE_MS + AFK_SECONDS * 1000
+    afkSecondsLeft.value = Math.ceil(totalMs / 1000)
     afkInterval = setInterval(() => {
       if (afkSecondsLeft.value !== null) afkSecondsLeft.value -= 1
     }, 1000)
@@ -652,7 +700,7 @@ watch(
       if (cur && cur.updatedAt === startedAt && engine.actionableUid(cur) === target) {
         performAutoAction(target)
       }
-    }, AFK_SECONDS * 1000)
+    }, totalMs)
   },
   { immediate: true },
 )
@@ -664,10 +712,10 @@ watch(
 // above still resolves it after a few seconds. ----
 let autoStackDrawFor = null
 watch(
-  () => [pendingDraw.value, actionable.value, game.value?.updatedAt],
+  () => [pendingDraw.value, actionable.value, game.value?.updatedAt, turnPauseActive.value],
   () => {
     const g = game.value
-    if (!g || !pendingDraw.value || actionable.value !== uid.value) return
+    if (!g || !pendingDraw.value || actionable.value !== uid.value || turnPauseActive.value) return
     const hand = g.hands[uid.value] || []
     const canStack = hand.some((c) => engine.isPlayableNow(c, g))
     if (canStack) return
@@ -747,7 +795,8 @@ onBeforeUnmount(() => {
           "
         >
           {{ turnBannerText }}
-          <span v-if="afkSecondsLeft !== null && afkSecondsLeft <= 5" class="ml-1 opacity-80">
+          <span v-if="turnPauseActive" class="ml-1 opacity-80"> ({{ pauseSecondsLeft }}s)</span>
+          <span v-else-if="afkSecondsLeft !== null && afkSecondsLeft <= 5" class="ml-1 opacity-80">
             (auto in {{ afkSecondsLeft }}s)
           </span>
         </p>
@@ -818,7 +867,7 @@ onBeforeUnmount(() => {
     <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
       <div class="pointer-events-auto mb-1 flex items-center gap-3">
         <span class="rounded-full bg-slate-950/70 px-2 py-0.5 text-xs text-slate-400 backdrop-blur">
-          {{ myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
+          {{ myTurn && turnPauseActive ? 'Get ready…' : myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
         </span>
         <button
           v-if="showUnoButton"

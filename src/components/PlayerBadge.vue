@@ -26,7 +26,12 @@ function initials(n) {
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-0.5">
+  <div class="relative flex flex-col items-center gap-0.5">
+    <div
+      v-if="isTurn"
+      class="pointer-events-none absolute -inset-5 -z-10 animate-pulse rounded-full bg-uno-yellow/40 blur-xl"
+      aria-hidden="true"
+    ></div>
     <CardFan :cards="cards" />
     <div class="relative">
       <div
