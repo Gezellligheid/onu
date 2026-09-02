@@ -111,7 +111,33 @@ onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48))
+
+// The piles/direction-arrow box was a fixed 440x280 — fine on desktop, but
+// wider than an entire mobile screen. Scale it down to fit, same aspect
+// ratio throughout (the SVG's viewBox scales with it automatically).
+const pilesBoxWidth = computed(() => Math.min(440, handAvailableWidth.value))
+const pilesBoxHeight = computed(() => Math.round(pilesBoxWidth.value * (280 / 440)))
+// The hand box's fixed height only needs to fit the (mobile-shrunk) card
+// height plus its droop — 260px was tuned for the desktop xl card.
+const handBoxHeight = computed(() => (isMobileCardSize.value ? 200 : 260))
 const HAND_EDGE_PAD = 12
+
+// Once a hand grows past HAND_ARC_SIZE cards (No Mercy's Mercy limit has no
+// cap, so this genuinely happens), it splits into multiple fans of up to
+// HAND_ARC_SIZE cards each, stacked one under another — each arc dense-packs
+// and ripples independently instead of one single fan getting absurdly thin.
+const HAND_ARC_SIZE = 40
+const HAND_ARC_GAP = -30 // negative = arcs overlap slightly, reading as one tighter stack instead of far-apart rows
+const handArcs = computed(() => {
+  const hand = sortedHand.value
+  if (hand.length === 0) return [[]]
+  const arcs = []
+  for (let i = 0; i < hand.length; i += HAND_ARC_SIZE) arcs.push(hand.slice(i, i + HAND_ARC_SIZE))
+  return arcs
+})
+const handTotalHeight = computed(
+  () => handBoxHeight.value * handArcs.value.length + HAND_ARC_GAP * Math.max(handArcs.value.length - 1, 0),
+)
 
 // No floor here on purpose — the whole fan always has to fit in
 // handAvailableWidth with zero scrolling, however dense that makes it. The
@@ -121,7 +147,7 @@ const HAND_EDGE_PAD = 12
 // off-screen even though their centers technically fit.
 function handSpacing(total) {
   if (total <= 1) return HAND_MAX_SPACING
-  const fit = (handAvailableWidth.value - HAND_CARD_PX - HAND_EDGE_PAD) / (total - 1)
+  const fit = (handAvailableWidth.value - HAND_CARD_PX.value - HAND_EDGE_PAD) / (total - 1)
   return Math.min(HAND_MAX_SPACING, Math.max(0, fit))
 }
 // Capped so the droop never outgrows the fan's fixed-height box (260px).
@@ -129,20 +155,30 @@ const HAND_Y_DROOP_CAP = 40
 
 // ---- Hover ripple: which card the mouse is currently over parts it and its
 // nearest neighbors apart (and lifts/enlarges them) so a densely packed hand
-// stays fully clickable — this is what replaces scrolling. ----
+// stays fully clickable — this is what replaces scrolling. Scoped per arc
+// (arcIdx + card index) so hovering one arc never ripples a different one. ----
+const hoverArc = ref(null)
 const hoverCardIndex = ref(null)
 const RIPPLE_RADIUS = 2.4 // ~5 cards feel it (the hovered one + 2 each side)
 const RIPPLE_PUSH = 46 // px the nearest neighbors get shoved apart, at peak
 const RIPPLE_LIFT = 20 // px risen up, at peak
 const RIPPLE_SCALE = 0.14 // extra scale, at peak
-function onCardHoverEnter(i) {
+function onCardHoverEnter(arcIdx, i) {
+  hoverArc.value = arcIdx
   hoverCardIndex.value = i
 }
-function onCardHoverLeave(i) {
-  if (hoverCardIndex.value === i) hoverCardIndex.value = null
+function onCardHoverLeave(arcIdx, i) {
+  if (hoverArc.value === arcIdx && hoverCardIndex.value === i) {
+    hoverArc.value = null
+    hoverCardIndex.value = null
+  }
+}
+function clearHandHover() {
+  hoverArc.value = null
+  hoverCardIndex.value = null
 }
 
-function handCardStyle(i, total) {
+function handCardStyle(arcIdx, i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
   const offset = i - mid
@@ -153,7 +189,7 @@ function handCardStyle(i, total) {
   let scale = 1
   let z = i
 
-  const hovered = hoverCardIndex.value
+  const hovered = hoverArc.value === arcIdx ? hoverCardIndex.value : null
   if (hovered !== null) {
     const dist = i - hovered
     const absDist = Math.abs(dist)
@@ -173,13 +209,14 @@ function handCardStyle(i, total) {
     zIndex: z,
   }
 }
-// Natural width of the fan at its (always screen-safe) dense spacing —
+// Natural width of one arc's fan at its (always screen-safe) dense spacing —
 // mirrors the same card-overhang + edge-pad accounting as handSpacing, so
-// this never exceeds handAvailableWidth.
-const handFanWidth = computed(() => {
-  const n = myHand.value.length
-  return Math.max(n - 1, 0) * handSpacing(n) + HAND_CARD_PX + HAND_EDGE_PAD
-})
+// this never exceeds handAvailableWidth. The overall hand container is sized
+// to the widest arc (normally all of them, except perhaps a shorter last one).
+function fanWidthFor(total) {
+  return Math.max(total - 1, 0) * handSpacing(total) + HAND_CARD_PX.value + HAND_EDGE_PAD
+}
+const handFanWidth = computed(() => handArcs.value.reduce((max, arc) => Math.max(max, fanWidthFor(arc.length)), 0))
 
 const noPlayableCards = computed(() => {
   const g = game.value
@@ -333,6 +370,23 @@ function isJumpInEligible(card) {
   if (pendingSwapCard.value || pendingWildCard.value) return false
   return !!activeEngine.value.isJumpInMatch?.(card, g)
 }
+
+// "X" shortcut: jump in with the first eligible card in hand — no need to
+// hunt for the (already cyan-glowing) card and click it precisely. Not
+// Space — that's the browser's native "scroll down" key and fighting that
+// felt like the page was jumping around even with preventDefault.
+const jumpInHotkeyCard = computed(() => myHand.value.find((c) => isJumpInEligible(c)) ?? null)
+function onJumpInHotkey(e) {
+  if (e.code !== 'KeyX' || e.repeat) return
+  const tag = document.activeElement?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return
+  const card = jumpInHotkeyCard.value
+  if (!card) return
+  e.preventDefault()
+  onCardClick(card)
+}
+onMounted(() => window.addEventListener('keydown', onJumpInHotkey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onJumpInHotkey))
 
 function onCardClick(card) {
   unlockAudio()
@@ -513,12 +567,17 @@ function setSeatRef(id, el) {
 // discard/draw wrappers are wider than a single card, so a "fly to hand"
 // animation would balloon up to the width of the whole hand panel instead
 // of landing at normal card size.
-const HAND_CARD_PX = 134 // matches PlayingCard size="xl" used for my own hand
-const SEAT_CARD_PX = 40 // matches CardFan's size="sm"
-const PILE_CARD_PX = 112 // matches PlayingCard size="lg" used for the piles
+// PlayingCard's xl/lg sizes shrink below this same viewport width via a
+// `sm:` Tailwind breakpoint — these mirror that in JS so fly-animation
+// clones and fan-spacing math stay in sync with what's actually rendered.
+const MOBILE_CARD_BREAKPOINT = 640
+const isMobileCardSize = computed(() => viewportWidth.value < MOBILE_CARD_BREAKPOINT)
+const HAND_CARD_PX = computed(() => (isMobileCardSize.value ? 96 : 134)) // matches PlayingCard size="xl"
+const SEAT_CARD_PX = 40 // matches CardFan's size="sm" (unchanged across breakpoints)
+const PILE_CARD_PX = computed(() => (isMobileCardSize.value ? 80 : 112)) // matches PlayingCard size="lg"
 
 function endpointFor(playerUid) {
-  if (playerUid === uid.value) return { el: myHandEl.value, size: HAND_CARD_PX, alignLeft: false }
+  if (playerUid === uid.value) return { el: myHandEl.value, size: HAND_CARD_PX.value, alignLeft: false }
   return { el: seatEls[playerUid] || null, size: SEAT_CARD_PX, alignLeft: false }
 }
 
@@ -817,20 +876,20 @@ watch(
       const dumpedCount = la.type === 'discardAll' ? la.dumpedCards?.length ?? 0 : 0
       const cardFlyDelay = dumpedCount * 110
       setTimeout(
-        () => spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card),
+        () => spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX.value, alignLeft: false }, la.card),
         cardFlyDelay,
       )
     }
     // Discard All dumps every matching-color card from the hand at once —
     // animate every one of them flying out, not just the card that was played.
     if (la?.type === 'discardAll' && la.dumpedCards?.length && discardPileEl.value) {
-      spawnFlyBatch(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.dumpedCards)
+      spawnFlyBatch(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX.value, alignLeft: false }, la.dumpedCards)
     }
     // Roulette's reveal is handled separately below (public arch first,
     // hand second) instead of the generic straight-to-hand fly every other
     // forced draw uses.
     if (g.lastDraw && drawPileEl.value && la?.type !== 'roulette-resolved') {
-      const from = { el: drawPileEl.value, size: PILE_CARD_PX, alignLeft: false }
+      const from = { el: drawPileEl.value, size: PILE_CARD_PX.value, alignLeft: false }
       spawnFlyBatch(from, endpointFor(g.lastDraw.by), g.lastDraw.cardIds.map(() => null))
     }
     if (la?.type === 'roulette-resolved' && la.revealedCards?.length) {
@@ -1072,11 +1131,13 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Round table -->
+    <!-- Round table. Taller aspect + extra top clearance on mobile: opponent
+    seats sit as high as ~10% from the table's own top edge, and their
+    fixed-size badge/card-fan content pokes up further above that anchor
+    point than a short, wide (desktop) table has room for. -->
     <div
-      class="relative mb-3 w-full rounded-[3rem] border border-white/5 bg-gradient-to-b from-emerald-950/40 to-slate-950/40 transition-shadow"
+      class="relative mb-3 mt-10 w-full aspect-[4/5] rounded-[3rem] border border-white/5 bg-gradient-to-b from-emerald-950/40 to-slate-950/40 transition-shadow sm:mt-0 sm:aspect-[16/13]"
       :class="myTurn ? 'shadow-[0_0_0_2px_rgba(250,204,21,0.35),0_0_40px_rgba(250,204,21,0.12)]' : ''"
-      style="aspect-ratio: 16 / 13"
     >
       <div
         v-for="p in opponentSeats"
@@ -1147,7 +1208,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="relative flex items-center justify-center" style="width: 440px; height: 280px">
+        <div class="relative flex items-center justify-center" :style="{ width: `${pilesBoxWidth}px`, height: `${pilesBoxHeight}px` }">
           <!-- Big circular direction arrow, mirrored when play reverses -->
           <svg
             viewBox="0 0 440 280"
@@ -1207,10 +1268,16 @@ onBeforeUnmount(() => {
     </p>
 
     <!-- Spacer so page content isn't hidden behind the floating hand -->
-    <div class="h-[300px]"></div>
+    <div :style="{ height: `${handTotalHeight + 46}px` }"></div>
 
     <!-- My hand: floats freely in front of everything, no boxed panel -->
     <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
+      <p
+        v-if="jumpInHotkeyCard"
+        class="pointer-events-none mb-1 animate-pulse-glow rounded-full bg-cyan-400/20 px-3 py-1 text-xs font-bold text-cyan-300 shadow"
+      >
+        Press <kbd class="rounded border border-cyan-300/50 bg-cyan-950/60 px-1.5 py-0.5 font-mono">X</kbd> to jump in!
+      </p>
       <div class="pointer-events-auto mb-1 flex items-center gap-3">
         <span class="rounded-full bg-slate-950/70 px-2 py-0.5 text-xs text-slate-400 backdrop-blur">
           {{ myTurn && turnPauseActive ? 'Get ready…' : myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
@@ -1224,32 +1291,44 @@ onBeforeUnmount(() => {
           UNO!
         </button>
       </div>
+      <!--
+        A hand over HAND_ARC_SIZE cards (no cap on the Mercy limit means this
+        genuinely happens) splits into multiple fans stacked one under
+        another instead of one fan getting absurdly thin.
+      -->
       <div
-        class="pointer-events-auto relative"
-        :style="{ width: `${handFanWidth}px`, height: '260px' }"
+        class="pointer-events-auto flex flex-col items-center"
+        :style="{ gap: `${HAND_ARC_GAP}px` }"
         ref="myHandEl"
-        @mouseleave="hoverCardIndex = null"
+        @mouseleave="clearHandHover"
       >
         <div
-          v-for="(card, idx) in sortedHand"
-          :key="card.id"
-          class="absolute left-1/2 top-4 origin-bottom transition-transform duration-150"
-          :style="handCardStyle(idx, sortedHand.length)"
-          @mouseenter="onCardHoverEnter(idx)"
-          @mouseleave="onCardHoverLeave(idx)"
+          v-for="(arc, arcIdx) in handArcs"
+          :key="arcIdx"
+          class="relative"
+          :style="{ width: `${fanWidthFor(arc.length)}px`, height: `${handBoxHeight}px` }"
         >
-          <PlayingCard
-            :card="card"
-            size="xl"
-            :playable="isCardPlayable(card)"
-            :disabled="!isCardPlayable(card) && !isJumpInEligible(card)"
-            :glow="isCardPlayable(card) && !pendingDraw"
-            :urgent="isCardPlayable(card) && !!pendingDraw"
-            :jump-in="!isCardPlayable(card) && isJumpInEligible(card)"
-            animate-in="deal"
-            :style="{ animationDelay: `${idx * 35}ms` }"
-            @click="onCardClick(card)"
-          />
+          <div
+            v-for="(card, idx) in arc"
+            :key="card.id"
+            class="absolute left-1/2 top-4 origin-bottom transition-transform duration-150"
+            :style="handCardStyle(arcIdx, idx, arc.length)"
+            @mouseenter="onCardHoverEnter(arcIdx, idx)"
+            @mouseleave="onCardHoverLeave(arcIdx, idx)"
+          >
+            <PlayingCard
+              :card="card"
+              size="xl"
+              :playable="isCardPlayable(card)"
+              :disabled="!isCardPlayable(card) && !isJumpInEligible(card)"
+              :glow="isCardPlayable(card) && !pendingDraw"
+              :urgent="isCardPlayable(card) && !!pendingDraw"
+              :jump-in="!isCardPlayable(card) && isJumpInEligible(card)"
+              animate-in="deal"
+              :style="{ animationDelay: `${(arcIdx * HAND_ARC_SIZE + idx) * 35}ms` }"
+              @click="onCardClick(card)"
+            />
+          </div>
         </div>
       </div>
     </div>

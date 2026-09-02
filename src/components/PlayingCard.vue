@@ -17,8 +17,8 @@ const props = defineProps({
 const sizes = {
   sm: 'w-10 h-14 rounded-lg',
   md: 'w-16 h-24 rounded-xl',
-  lg: 'w-[112px] h-[157px] rounded-2xl', // center piles
-  xl: 'w-[134px] h-[202px] rounded-2xl', // your own hand
+  lg: 'w-20 h-28 sm:w-[112px] sm:h-[157px] rounded-2xl', // center piles
+  xl: 'w-24 h-36 sm:w-[134px] sm:h-[202px] rounded-2xl', // your own hand
 }
 
 const enterAnim = {
