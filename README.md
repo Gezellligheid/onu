@@ -99,8 +99,10 @@ Based on the [official rules](https://www.unorules.com/), plus a few common hous
   - Playing Skip → `public/sounds/blocked/`
   - Playing Reverse → `public/sounds/rotate/`
   - The current color changing (a color match, or a Wild/Wild+4 choosing one) → `public/sounds/colors/{red,yellow,green,blue}.m4a`, the exact color, not random
-  - A Wild +4 specifically being played (not a plain Wild) → `public/sounds/blackcard/`
+  - A Wild +4 specifically being played (not a plain Wild) → `public/sounds/blackcard/` (this replaces the generic stacking blip for +4s — no separate "draw" sound plays at the moment a +4 is played, only when it's actually drawn)
   - A forced +2/+4 penalty draw → `public/sounds/drawstack/`, played **once** per penalty regardless of how many cards it draws (not once per card)
+
+  When more than one of these applies to the same event (e.g. a Wild +4 both changes the color and gets its own cue), they play **one after another** with a short gap, not layered on top of each other.
 
   A mute toggle sits in the top-right of the game screen and the preference persists via `localStorage`.
 - **Turn clarity** — the whole table gets a soft glow on your turn, the active seat's avatar has a pulsing ring and a little pointer under it, and a banner in the center always says exactly what's happening ("Your turn", "X must respond to the +6 stack!", "Choose a color!", etc). The draw pile itself labels what it wants ("Draw!" or "Draw 4!") whenever you have no other option.

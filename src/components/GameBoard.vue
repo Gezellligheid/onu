@@ -472,64 +472,75 @@ watch(
 
     const la = g.lastAction
     const isStackPenaltyDraw = la?.type === 'forced-draw' || la?.type === 'forced-draw-partial'
+    const isWild4Play = la?.card?.type === 'wild4' && PLAY_TYPES.has(la.type)
+
+    // Several of these can be true for the same event (e.g. playing a Wild
+    // +4 changes the color AND is a black card). Queue them instead of
+    // firing all at once so they play one after another, not layered.
+    const queue = []
+    const enqueue = (fn) => queue.push(fn)
 
     if (g.lastDraw) {
       // A forced +2/+4 draw plays its cards one at a time (each its own fly
       // animation), but the sound should announce the penalty once, not
       // once per card — only fire on the first card of the sequence.
       if (isStackPenaltyDraw) {
-        if (!wasStackPenaltyDraw) sfx.drawStack()
+        if (!wasStackPenaltyDraw) enqueue(() => sfx.drawStack())
       } else {
-        sfx.cardDraw(g.lastDraw.cardIds.length)
+        enqueue(() => sfx.cardDraw(g.lastDraw.cardIds.length))
       }
     }
     wasStackPenaltyDraw = isStackPenaltyDraw
 
-    if (g.currentColor && g.currentColor !== lastSeenColor) {
-      sfx.colorChange(g.currentColor)
-    }
-    lastSeenColor = g.currentColor
-
-    if (la?.card?.type === 'wild4' && PLAY_TYPES.has(la.type)) {
-      sfx.blackCard()
-    }
-
     switch (la?.type) {
       case 'play':
-        sfx.cardPlay()
+        enqueue(() => sfx.cardPlay())
         break
       case 'skip':
       case 'starter-skip':
-        sfx.skip()
+        enqueue(() => sfx.skip())
         break
       case 'reverse':
       case 'starter-reverse':
-        sfx.reverse()
+        enqueue(() => sfx.reverse())
         break
       case 'stack-draw2':
+        enqueue(() => sfx.stack())
+        break
       case 'stack-wild4':
-        sfx.stack()
+        // Wild +4 gets its own dedicated cue below instead of the generic
+        // stacking blip — avoids two "something got drawn/stacked"-sounding
+        // effects firing for the same card.
         break
       case 'wild':
-        sfx.wild()
+        enqueue(() => sfx.wild())
         break
       case 'uno-call':
-        sfx.unoCall()
+        enqueue(() => sfx.unoCall())
         break
       case 'uno-caught':
-        sfx.caught()
+        enqueue(() => sfx.caught())
         break
       case 'pass':
       case 'color-chosen':
-        sfx.click()
+        enqueue(() => sfx.click())
         break
       case 'round-over':
-        if (g.status === 'game-over') sfx.gameWin()
-        else sfx.roundWin()
+        if (g.status === 'game-over') enqueue(() => sfx.gameWin())
+        else enqueue(() => sfx.roundWin())
         break
       default:
         break
     }
+
+    if (isWild4Play) enqueue(() => sfx.blackCard())
+
+    if (g.currentColor && g.currentColor !== lastSeenColor) {
+      enqueue(() => sfx.colorChange(g.currentColor))
+    }
+    lastSeenColor = g.currentColor
+
+    queue.forEach((fn, i) => (i === 0 ? fn() : setTimeout(fn, i * 260)))
 
     if (la?.card && PLAY_TYPES.has(la.type) && discardPileEl.value) {
       spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card)
