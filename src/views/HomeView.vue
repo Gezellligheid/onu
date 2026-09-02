@@ -9,7 +9,6 @@ import {
   TARGET_SCORE_OPTIONS as NO_MERCY_SCORE_OPTIONS,
   DEFAULT_MERCY_LIMIT,
   MERCY_LIMIT_MIN,
-  MERCY_LIMIT_MAX,
 } from '../lib/no-mercy/constants.js'
 
 const router = useRouter()
@@ -30,7 +29,7 @@ const scoreOptions = computed(() => (gameMode.value === 'no-mercy' ? NO_MERCY_SC
 
 function clampMercyLimit() {
   const n = Math.round(Number(mercyLimit.value))
-  mercyLimit.value = Number.isFinite(n) ? Math.min(MERCY_LIMIT_MAX, Math.max(MERCY_LIMIT_MIN, n)) : DEFAULT_MERCY_LIMIT
+  mercyLimit.value = Number.isFinite(n) ? Math.max(MERCY_LIMIT_MIN, n) : DEFAULT_MERCY_LIMIT
 }
 
 watch(gameMode, (m) => {
@@ -172,13 +171,12 @@ async function submit() {
             v-model.number="mercyLimit"
             type="number"
             :min="MERCY_LIMIT_MIN"
-            :max="MERCY_LIMIT_MAX"
             step="1"
             @blur="clampMercyLimit"
             class="w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-slate-100 outline-none ring-uno-red/60 focus:ring-2"
           />
           <p class="mt-1 px-1 text-[11px] text-slate-500">
-            Cards in hand before you're knocked out for the round ({{ MERCY_LIMIT_MIN }}-{{ MERCY_LIMIT_MAX }}).
+            Cards in hand before you're knocked out for the round (min {{ MERCY_LIMIT_MIN }}).
           </p>
         </div>
 

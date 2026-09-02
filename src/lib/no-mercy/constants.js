@@ -21,7 +21,6 @@ export const TARGET_SCORE_OPTIONS = [500, 1000, 1500]
 
 export const DEFAULT_MERCY_LIMIT = 25 // hand size at which a player is knocked out
 export const MERCY_LIMIT_MIN = 8 // below the 7-card starting hand there'd be no room to play a single turn
-export const MERCY_LIMIT_MAX = 50
 export const KNOCKOUT_BONUS = 250 // awarded to the round winner per player knocked out
 export const NO_UNO_CALL_PENALTY = 2
 
