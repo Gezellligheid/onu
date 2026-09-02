@@ -9,6 +9,7 @@ import PlayerBadge from './PlayerBadge.vue'
 import ColorPickerModal from './ColorPickerModal.vue'
 import RoundSummaryModal from './RoundSummaryModal.vue'
 import { COLOR_HEX, COLORS } from '../lib/uno/constants.js'
+import { WILD_COLOR_CHOICE_TYPES } from '../lib/no-mercy/constants.js'
 
 const AFK_SECONDS = 10
 
@@ -326,11 +327,16 @@ function onCardClick(card) {
   unlockAudio()
   if (!isCardPlayable(card)) return
   if (isNoMercy.value) {
-    // No Mercy's wild cards (Reverse Draw 4 / Draw 6 / Draw 10 / Color
-    // Roulette) have no color-choice step at all — only a 7 needs extra
-    // input, and that's chosen by clicking a seat at the table, not a modal.
+    // A 7 needs a swap target, chosen by clicking a seat at the table. Wild
+    // Reverse Draw 4 / Draw 6 / Draw 10 need a color choice (house rule).
+    // Wild Color Roulette needs neither — its "choose a color" belongs to
+    // the next player, not whoever plays it.
     if (card.type === 'number' && card.value === 7) {
       pendingSwapCard.value = card
+      return
+    }
+    if (WILD_COLOR_CHOICE_TYPES.includes(card.type)) {
+      pendingWildCard.value = card
       return
     }
     submitPlay(card.id, null)
@@ -934,8 +940,10 @@ async function performAutoAction(actUid) {
     else if (action.kind === 'pass') await roomStore.passTurn(actUid)
     else if (action.kind === 'draw') await autoDrawUntilResolved(actUid)
     else if (action.kind === 'play') {
-      // No Mercy's wild cards need no color choice at all — only classic's do.
-      const isWild = g.mode !== 'no-mercy' && (action.card.type === 'wild' || action.card.type === 'wild4')
+      const isWild =
+        g.mode === 'no-mercy'
+          ? WILD_COLOR_CHOICE_TYPES.includes(action.card.type)
+          : action.card.type === 'wild' || action.card.type === 'wild4'
       const isSwap7 = g.mode === 'no-mercy' && action.card.type === 'number' && action.card.value === 7
       const color = isWild ? COLORS[Math.floor(Math.random() * COLORS.length)] : null
       let swapTarget = null

@@ -8,6 +8,7 @@ import {
   NO_UNO_CALL_PENALTY,
   DRAW_VALUE,
   DEFAULT_TARGET_SCORE,
+  WILD_COLOR_CHOICE_TYPES,
 } from './constants.js'
 
 export function topCard(state) {
@@ -378,15 +379,25 @@ export function playCard(state, uid, cardId, chosenColor, swapTargetUid) {
     if (!swapTargetUid || swapTargetUid === uid) throw new Error('Choose another player to swap hands with.')
     if (!next.hands[swapTargetUid] || next.eliminated[swapTargetUid]) throw new Error('Invalid swap target.')
   }
+  if (WILD_COLOR_CHOICE_TYPES.includes(card.type) && !COLORS.includes(chosenColor)) {
+    throw new Error('Choose a color.')
+  }
 
   next.pendingDrawnChoice = null
   hand.splice(cardIdx, 1)
   next.discardPile.push(card)
   next.lastDraw = null
-  // No Mercy's wild cards (Reverse Draw 4 / Draw 6 / Draw 10 / Color
-  // Roulette) have no "choose a color" step — the current color simply
-  // carries over unchanged when one is played.
-  if (card.color !== 'black') next.currentColor = card.color
+  // House rule: Wild Reverse Draw 4 / Draw 6 / Draw 10 let whoever plays
+  // them choose the next color, same as classic's Wild/Wild+4 (the official
+  // rules have no color-choice step here, but the app adds one). Wild Color
+  // Roulette is the one black card that still leaves currentColor
+  // unchanged — its "choose a color" is the NEXT player's hunt color, a
+  // different mechanic entirely.
+  if (card.color !== 'black') {
+    next.currentColor = card.color
+  } else if (WILD_COLOR_CHOICE_TYPES.includes(card.type)) {
+    next.currentColor = chosenColor
+  }
 
   applyCardEffect(next, uid, card, { swapTargetUid })
 
@@ -441,16 +452,19 @@ export function drawCard(state, uid) {
     return next
   }
 
-  // Only a drawn 7 needs extra input (who to swap with) — every wild card
-  // in this deck has no color choice, so it resolves immediately below
-  // just like any other mandatory play.
-  if (card.type === 'number' && card.value === 7) {
+  // A drawn 7 needs a swap target, and a drawn Wild Reverse Draw 4 / Draw 6
+  // / Draw 10 needs a color choice (house rule — see WILD_COLOR_CHOICE_TYPES)
+  // — everything else (including Wild Color Roulette) resolves immediately
+  // below with no extra input.
+  const isSwap7 = card.type === 'number' && card.value === 7
+  const needsColorChoice = WILD_COLOR_CHOICE_TYPES.includes(card.type)
+  if (isSwap7 || needsColorChoice) {
     next.pendingDrawnChoice = { uid, cardId: card.id }
     next.lastAction = {
       type: 'draw-needs-choice',
       by: uid,
       card,
-      message: `${nameFor(next, uid)} drew ${describeCard(card)} — must choose who to swap with.`,
+      message: `${nameFor(next, uid)} drew ${describeCard(card)} — must ${isSwap7 ? 'choose who to swap with' : 'choose a color'}.`,
     }
     next.updatedAt = Date.now()
     return next

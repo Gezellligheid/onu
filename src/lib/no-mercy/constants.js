@@ -38,12 +38,10 @@ export const COLORED_ACTION_COUNTS = {
   skipEveryone: 2,
 }
 // Wild cards (color: 'black', always playable). Per the official rules sheet
-// there is no plain "Wild" card in this deck, and none of these four cards
-// have a color-choice step — Wild Color Roulette's "choose a color" is made
-// by the NEXT player (to hunt for during the reveal), not by whoever plays
-// it. Counts are hand-verified off the card sheet and are NOT uniform:
-// Wild Reverse Draw 4 and Wild Color Roulette get 8 copies each, Wild Draw 6
-// and Wild Draw 10 get 4 each (24 total).
+// there is no plain "Wild" card in this deck. Counts are hand-verified off
+// the card sheet and are NOT uniform: Wild Reverse Draw 4 and Wild Color
+// Roulette get 8 copies each, Wild Draw 6 and Wild Draw 10 get 4 each (24
+// total).
 export const WILD_TYPES = ['wildReverseDraw4', 'wildDraw6', 'wildDraw10', 'wildColorRoulette']
 export const WILD_COUNTS = {
   wildReverseDraw4: 8,
@@ -51,6 +49,12 @@ export const WILD_COUNTS = {
   wildDraw6: 4,
   wildDraw10: 4,
 }
+// House rule (requested): the three draw-value wilds let whoever plays them
+// choose the next color, same as classic's Wild/Wild+4 — official rules
+// have no color-choice step here, but the app now does. Wild Color
+// Roulette is deliberately excluded: its "choose a color" is made by the
+// NEXT player (to hunt for during the reveal), a different mechanic.
+export const WILD_COLOR_CHOICE_TYPES = ['wildReverseDraw4', 'wildDraw6', 'wildDraw10']
 
 // The "draw value" a Draw-type card carries for the value-tiered stacking
 // rule — a card can stack onto a pending draw if its own value is >= it.
