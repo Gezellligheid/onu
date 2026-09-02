@@ -584,7 +584,7 @@ watch(actionable, (id) => {
 // (not just a continuation, e.g. mid multi-card forced draw), everyone gets
 // a fixed 3s beat to see what just happened before the new player can act.
 // Shared/synchronized off game state, not a per-player thing. ----
-const TURN_PAUSE_MS = 3000
+const TURN_PAUSE_MS = 1000
 const turnPauseActive = ref(false)
 const pauseSecondsLeft = ref(null)
 let turnPauseTimeout = null
@@ -740,6 +740,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- Screen-edge glow: a clear, ambient "it's your turn" cue beyond just the table/hand -->
+  <div
+    v-if="myTurn"
+    class="pointer-events-none fixed inset-0 z-20 animate-edge-fade"
+    style="box-shadow: inset 0 0 40px 8px rgba(250, 204, 21, 0.45), inset 0 0 120px 30px rgba(250, 204, 21, 0.2)"
+    aria-hidden="true"
+  ></div>
+
   <div class="mx-auto flex min-h-screen max-w-5xl flex-col px-3 py-4">
     <div class="mb-2 flex items-center justify-between text-xs text-slate-500">
       <span>Room <span class="font-semibold text-slate-300">{{ room.code }}</span></span>

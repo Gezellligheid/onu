@@ -68,6 +68,10 @@ export default {
           '0%, 100%': { boxShadow: '0 0 0 5px rgba(237,28,36,0.95), 0 0 30px 10px rgba(237,28,36,0.7)' },
           '50%': { boxShadow: '0 0 0 0 rgba(237,28,36,0), 0 0 0 0 rgba(237,28,36,0)' },
         },
+        'edge-fade': {
+          '0%, 100%': { opacity: '0.45' },
+          '50%': { opacity: '0.9' },
+        },
       },
       animation: {
         'deal-in': 'deal-in 0.35s ease-out',
@@ -81,6 +85,7 @@ export default {
         'fly-in': 'fly-in 0.4s cubic-bezier(0.2,0.8,0.3,1)',
         'flash-yellow': 'flash-yellow 0.8s steps(1, jump-end) infinite',
         'flash-red': 'flash-red 0.8s steps(1, jump-end) infinite',
+        'edge-fade': 'edge-fade 2.4s ease-in-out infinite',
       },
     },
   },
