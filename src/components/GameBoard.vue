@@ -95,9 +95,14 @@ function isCardPlayable(card) {
 
 // Your own hand fans out in a slight arc, center raised — like cards held
 // in two hands — instead of a flat overlapping row. The arc widens as you
-// draw more cards (using up to the full screen width), and only starts
-// getting denser once it would otherwise run off the edge of the screen.
+// draw more cards (using up to the full screen width) and starts getting
+// denser once it would otherwise run off the edge of the screen — but only
+// down to HAND_MIN_SPACING, so cards stay individually visible/clickable
+// instead of compressing down to nothing. No Mercy hands can get huge (the
+// Mercy limit has no cap), so once even that floor doesn't fit, the hand
+// becomes a horizontally scrollable strip rather than spilling off-screen.
 const HAND_MAX_SPACING = 81
+const HAND_MIN_SPACING = 26
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
 function onResize() {
   viewportWidth.value = window.innerWidth
@@ -109,8 +114,15 @@ const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48
 
 function handSpacing(total) {
   if (total <= 1) return HAND_MAX_SPACING
-  return Math.min(HAND_MAX_SPACING, handAvailableWidth.value / (total - 1))
+  const fit = handAvailableWidth.value / (total - 1)
+  return Math.min(HAND_MAX_SPACING, Math.max(HAND_MIN_SPACING, fit))
 }
+// Capped so the droop never outgrows the fan's fixed-height box (260px) —
+// without this, a big hand's edge cards would need a taller box than that,
+// which would fight with the horizontal scroll wrapper below (a container
+// can't scroll on one axis while staying freely "overflow: visible" on the
+// other; the browser forces both to behave the same way).
+const HAND_Y_DROOP_CAP = 40
 function handCardStyle(i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
@@ -118,16 +130,23 @@ function handCardStyle(i, total) {
   const spacing = handSpacing(total)
   const rotate = offset * Math.min(6, 46 / total)
   const x = offset * spacing
-  const y = offset * offset * Math.min(3.4, 22 / total)
+  const y = Math.min(HAND_Y_DROOP_CAP, offset * offset * Math.min(3.4, 22 / total))
   return {
     transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg)`,
     zIndex: i,
   }
 }
+// Natural width of the full fan at its current spacing — may exceed the
+// viewport once spacing bottoms out at HAND_MIN_SPACING, in which case the
+// scroll wrapper below takes over instead of letting cards run off-screen.
 const handFanWidth = computed(() => {
   const n = myHand.value.length
-  return Math.max(n - 1, 0) * handSpacing(n) + 160
+  return Math.max(n - 1, 0) * handSpacing(n) + HAND_CARD_PX + 26
 })
+// The visible scroll viewport: never wider than the fan itself (so a small
+// hand doesn't leave dead space) and never wider than the screen allows.
+const handViewportWidth = computed(() => Math.min(handFanWidth.value, handAvailableWidth.value))
+const handOverflows = computed(() => handFanWidth.value > handAvailableWidth.value)
 
 const noPlayableCards = computed(() => {
   const g = game.value
@@ -1135,26 +1154,38 @@ onBeforeUnmount(() => {
           UNO!
         </button>
       </div>
-      <div class="pointer-events-auto relative" :style="{ width: `${handFanWidth}px`, height: '260px' }" ref="myHandEl">
-        <div
-          v-for="(card, idx) in sortedHand"
-          :key="card.id"
-          class="absolute left-1/2 top-4 origin-bottom transition-transform duration-300 hover:z-30"
-          :style="handCardStyle(idx, sortedHand.length)"
-        >
-          <PlayingCard
-            :card="card"
-            size="xl"
-            :playable="isCardPlayable(card)"
-            :disabled="!isCardPlayable(card)"
-            :glow="isCardPlayable(card) && !pendingDraw"
-            :urgent="isCardPlayable(card) && !!pendingDraw"
-            animate-in="deal"
-            :style="{ animationDelay: `${idx * 35}ms` }"
-            @click="onCardClick(card)"
-          />
+      <!--
+        The scroll wrapper is what "my hand" endpoint animations anchor to
+        (always on-screen, regardless of scroll position) — the inner div is
+        the fan's true, possibly screen-exceeding, natural width.
+      -->
+      <div
+        class="pointer-events-auto overflow-x-auto overflow-y-visible"
+        :style="{ width: `${handViewportWidth}px`, height: '260px' }"
+        ref="myHandEl"
+      >
+        <div class="relative" :style="{ width: `${handFanWidth}px`, height: '260px' }">
+          <div
+            v-for="(card, idx) in sortedHand"
+            :key="card.id"
+            class="absolute left-1/2 top-4 origin-bottom transition-transform duration-300 hover:z-30"
+            :style="handCardStyle(idx, sortedHand.length)"
+          >
+            <PlayingCard
+              :card="card"
+              size="xl"
+              :playable="isCardPlayable(card)"
+              :disabled="!isCardPlayable(card)"
+              :glow="isCardPlayable(card) && !pendingDraw"
+              :urgent="isCardPlayable(card) && !!pendingDraw"
+              animate-in="deal"
+              :style="{ animationDelay: `${idx * 35}ms` }"
+              @click="onCardClick(card)"
+            />
+          </div>
         </div>
       </div>
+      <p v-if="handOverflows" class="pointer-events-none mt-0.5 text-[10px] text-slate-500">← scroll for more →</p>
     </div>
 
     <!-- Flying card / label overlay -->
