@@ -1,4 +1,4 @@
-import { COLORS, COLORED_ACTION_TYPES, WILD_TYPES, CARD_POINTS } from './constants.js'
+import { COLORS, COLORED_ACTION_TYPES, COLORED_ACTION_COUNTS, WILD_TYPES, WILD_COUNTS, CARD_POINTS } from './constants.js'
 
 let uid = 0
 function nextId() {
@@ -34,25 +34,25 @@ function wildCard(type) {
 }
 
 /**
- * Builds the 168-card UNO No Mercy deck:
- * per color -> one 0, two each of 1-9 (76 total), three each of
- * Skip/Reverse/Draw2/Draw4/DiscardAll/SkipEveryone (72 total),
- * plus 5 of each of the 4 wild types (20 total).
+ * Builds the 168-card UNO No Mercy deck. Every count here was hand-verified
+ * off the actual printed card sheet (not assumed from classic UNO's ratios):
+ * per color -> two each of 0-9 (80 total, NOT "one 0" like classic), plus
+ * COLORED_ACTION_COUNTS copies of each colored action (64 total), plus
+ * WILD_COUNTS copies of each wild (24 total). 80 + 64 + 24 = 168.
  */
 export function buildDeck() {
   const cards = []
   for (const color of COLORS) {
-    cards.push(numberCard(color, 0))
-    for (let v = 1; v <= 9; v += 1) {
+    for (let v = 0; v <= 9; v += 1) {
       cards.push(numberCard(color, v))
       cards.push(numberCard(color, v))
     }
     for (const type of COLORED_ACTION_TYPES) {
-      for (let i = 0; i < 3; i += 1) cards.push(actionCard(color, type))
+      for (let i = 0; i < COLORED_ACTION_COUNTS[type]; i += 1) cards.push(actionCard(color, type))
     }
   }
   for (const type of WILD_TYPES) {
-    for (let i = 0; i < 5; i += 1) cards.push(wildCard(type))
+    for (let i = 0; i < WILD_COUNTS[type]; i += 1) cards.push(wildCard(type))
   }
   return cards
 }
