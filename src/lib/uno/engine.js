@@ -32,6 +32,26 @@ export function isPlayableNow(card, state) {
   return isPlayable(card, topCard(state), state.currentColor)
 }
 
+/**
+ * House rule: Jump-In. If Jump-In is enabled and it's currently "open" play
+ * (no pending stack/color choice/drawn-card decision blocking things), any
+ * card matching the discard pile's top card EXACTLY — same color AND same
+ * number/symbol — can be played immediately by whoever holds it, even out
+ * of turn. https://matteluno.fandom.com/wiki/Jump-In
+ */
+export function isJumpInMatch(card, state) {
+  if (!state.jumpInEnabled || state.status !== 'playing') return false
+  if (state.pendingColorChoice || state.pendingDraw || state.awaitingDrawDecision) return false
+  const top = topCard(state)
+  if (!top) return false
+  return card.color === top.color && card.type === top.type && card.value === top.value
+}
+
+export function canJumpIn(state, uid) {
+  const hand = state.hands[uid]
+  return !!hand && hand.some((c) => isJumpInMatch(c, state))
+}
+
 function reshuffleFromDiscard(state) {
   const top = state.discardPile[state.discardPile.length - 1]
   const rest = state.discardPile.slice(0, -1)
@@ -72,7 +92,10 @@ function currentPlayerId(state) {
  * flipped starter card per official UNO rules (a Wild Draw Four as the
  * starter is illegal and gets reshuffled back in).
  */
-export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, scores = {}, roundNumber = 1 } = {}) {
+export function createRound(
+  players,
+  { targetScore = DEFAULT_TARGET_SCORE, jumpInEnabled = false, scores = {}, roundNumber = 1 } = {},
+) {
   const playerOrder = players.map((p) => p.uid)
   const hands = {}
   let deck = shuffle(buildDeck())
@@ -107,6 +130,7 @@ export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, score
     currentIndex: roundNumber > 1 ? (roundNumber - 1) % playerOrder.length : 0,
     direction: 1,
     pendingDraw: null,
+    jumpInEnabled,
     unoCalled: Object.fromEntries(playerOrder.map((uid) => [uid, false])),
     scores: nextScores,
     targetScore,
@@ -260,6 +284,31 @@ export function playCard(state, uid, cardId, chosenColor) {
   return next
 }
 
+/**
+ * Plays a card out of turn (see isJumpInMatch above). "Play immediately
+ * proceeds to the player after the person who jumped in" — implemented by
+ * jumping the turn to the jumper first, then running the exact same
+ * playCard logic as a normal turn from there.
+ */
+export function jumpIn(state, uid, cardId, chosenColor) {
+  if (!isJumpInMatch(state.hands[uid]?.find((c) => c.id === cardId), state)) {
+    throw new Error('That card cannot jump in right now.')
+  }
+  if (currentPlayerId(state) === uid) throw new Error('It is already your turn — just play it normally.')
+
+  const jumped = clone(state)
+  jumped.currentIndex = jumped.playerOrder.indexOf(uid)
+  const result = playCard(jumped, uid, cardId, chosenColor)
+  if (result.lastAction) {
+    result.lastAction = {
+      ...result.lastAction,
+      jumpIn: true,
+      message: `${nameFor(result, uid)} jumps in! ${result.lastAction.message}`,
+    }
+  }
+  return result
+}
+
 function describeCard(card) {
   if (card.type === 'number') return `${card.color} ${card.value}`
   if (card.type === 'wild') return 'Wild'
@@ -370,9 +419,13 @@ export function callUno(state, uid) {
   // two cards, and at least one of them is actually legal to play right
   // now. Once you've played it (down to one card) this can't be called
   // retroactively; the call itself is what needs to happen at that moment.
-  if (actionableUid(next) !== uid) throw new Error('You can only call UNO on your turn.')
+  // With Jump-In enabled, "about to play" also covers jumping in out of
+  // turn — you may call the instant before you jump in too.
+  const isMyTurn = actionableUid(next) === uid
+  const jumpEligible = !isMyTurn && canJumpIn(next, uid)
+  if (!isMyTurn && !jumpEligible) throw new Error('You can only call UNO on your turn (or when jumping in).')
   if (hand.length !== 2) throw new Error('You can only call UNO right before playing your second-to-last card.')
-  if (!hand.some((c) => isPlayableNow(c, next))) {
+  if (isMyTurn && !hand.some((c) => isPlayableNow(c, next))) {
     throw new Error('You need a legal play to call UNO.')
   }
   next.unoCalled[uid] = true
@@ -408,6 +461,7 @@ export function startNextRound(state) {
   if (state.status !== 'round-over') throw new Error('Current round has not finished.')
   return createRound(state.players, {
     targetScore: state.targetScore,
+    jumpInEnabled: state.jumpInEnabled,
     scores: state.scores,
     roundNumber: state.roundNumber + 1,
   })

@@ -14,8 +14,8 @@ export const useRoomStore = defineStore('room', {
     isHost: (state) => (uid) => state.room?.hostUid === uid,
   },
   actions: {
-    async create({ uid, name, targetScore, mode, mercyLimit }) {
-      const code = await roomLib.createRoom({ uid, name, targetScore, mode, mercyLimit })
+    async create({ uid, name, targetScore, mode, mercyLimit, jumpInEnabled }) {
+      const code = await roomLib.createRoom({ uid, name, targetScore, mode, mercyLimit, jumpInEnabled })
       this.watch(code)
       return code
     },
@@ -53,6 +53,9 @@ export const useRoomStore = defineStore('room', {
     },
     async playCard(uid, cardId, chosenColor, swapTargetUid) {
       await roomLib.playCard(this.code, uid, cardId, chosenColor, swapTargetUid)
+    },
+    async jumpIn(uid, cardId, chosenColor, swapTargetUid) {
+      await roomLib.jumpIn(this.code, uid, cardId, chosenColor, swapTargetUid)
     },
     async drawCard(uid) {
       await roomLib.drawCard(this.code, uid)

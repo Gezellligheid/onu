@@ -24,6 +24,9 @@ const canStart = computed(() => props.room.players.length >= MIN_PLAYERS)
       >
         {{ room.mode === 'no-mercy' ? 'UNO No Mercy' : 'Classic' }}
       </span>
+      <span v-if="room.jumpInEnabled" class="ml-2 mt-3 inline-block rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-slate-300">
+        Jump-In
+      </span>
     </div>
 
     <div class="rounded-2xl border border-white/10 bg-white/5 p-5">

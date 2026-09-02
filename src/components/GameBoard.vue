@@ -323,9 +323,21 @@ const DIR_RY = 129
 const directionArcPath = ellipseArcPath(DIR_CX, DIR_CY, DIR_RX, DIR_RY, -35, 250)
 const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 38)
 
+// House rule: Jump-In — a card matching the discard pile's top card EXACTLY
+// (color AND number/symbol) can be played out of turn, any time. Only
+// considered when the card isn't already a normal in-turn play.
+function isJumpInEligible(card) {
+  const g = game.value
+  if (!g || g.status !== 'playing') return false
+  if (myTurn.value || turnPauseActive.value) return false
+  if (pendingSwapCard.value || pendingWildCard.value) return false
+  return !!activeEngine.value.isJumpInMatch?.(card, g)
+}
+
 function onCardClick(card) {
   unlockAudio()
-  if (!isCardPlayable(card)) return
+  const viaJumpIn = !isCardPlayable(card) && isJumpInEligible(card)
+  if (!isCardPlayable(card) && !viaJumpIn) return
   if (isNoMercy.value) {
     // A 7 needs a swap target, chosen by clicking a seat at the table. Wild
     // Reverse Draw 4 / Draw 6 / Draw 10 need a color choice (house rule).
@@ -333,24 +345,28 @@ function onCardClick(card) {
     // the next player, not whoever plays it.
     if (card.type === 'number' && card.value === 7) {
       pendingSwapCard.value = card
+      pendingIsJumpIn.value = viaJumpIn
       return
     }
     if (WILD_COLOR_CHOICE_TYPES.includes(card.type)) {
       pendingWildCard.value = card
+      pendingIsJumpIn.value = viaJumpIn
       return
     }
-    submitPlay(card.id, null)
+    submitPlay(card.id, null, undefined, viaJumpIn)
     return
   }
   if (card.type === 'wild' || card.type === 'wild4') {
     pendingWildCard.value = card
+    pendingIsJumpIn.value = viaJumpIn
     return
   }
-  submitPlay(card.id, null)
+  submitPlay(card.id, null, undefined, viaJumpIn)
 }
 
 const pendingWildCard = ref(null)
 const pendingSwapCard = ref(null)
+const pendingIsJumpIn = ref(false)
 const swapCandidateUids = computed(() => {
   const g = game.value
   if (!g || !pendingSwapCard.value) return new Set()
@@ -381,20 +397,25 @@ async function onChooseColor(color) {
     return
   }
   const card = pendingWildCard.value
+  const viaJumpIn = pendingIsJumpIn.value
   pendingWildCard.value = null
-  await submitPlay(card.id, color)
+  pendingIsJumpIn.value = false
+  await submitPlay(card.id, color, undefined, viaJumpIn)
 }
 
 async function onChooseSwapTarget(targetUid) {
   unlockAudio()
   const card = pendingSwapCard.value
+  const viaJumpIn = pendingIsJumpIn.value
   pendingSwapCard.value = null
-  await submitPlay(card.id, null, targetUid)
+  pendingIsJumpIn.value = false
+  await submitPlay(card.id, null, targetUid, viaJumpIn)
 }
 
-async function submitPlay(cardId, color, swapTargetUid) {
+async function submitPlay(cardId, color, swapTargetUid, viaJumpIn) {
   try {
-    await roomStore.playCard(uid.value, cardId, color, swapTargetUid)
+    if (viaJumpIn) await roomStore.jumpIn(uid.value, cardId, color, swapTargetUid)
+    else await roomStore.playCard(uid.value, cardId, color, swapTargetUid)
   } catch (e) {
     flashError(e)
   }
@@ -432,8 +453,9 @@ const showUnoButton = computed(() => {
   if (g.unoCalled[uid.value]) return false
   if (isNoMercy.value) return myHand.value.length === 1
   if (myHand.value.length !== 2) return false
-  if (!myTurn.value) return false
-  return myHand.value.some((c) => activeEngine.value.isPlayableNow(c, g))
+  // Jump-In: you may also call the instant before jumping in out of turn.
+  if (myTurn.value) return myHand.value.some((c) => activeEngine.value.isPlayableNow(c, g))
+  return myHand.value.some((c) => isJumpInEligible(c))
 })
 async function onCallUno() {
   unlockAudio()
@@ -1220,9 +1242,10 @@ onBeforeUnmount(() => {
             :card="card"
             size="xl"
             :playable="isCardPlayable(card)"
-            :disabled="!isCardPlayable(card)"
+            :disabled="!isCardPlayable(card) && !isJumpInEligible(card)"
             :glow="isCardPlayable(card) && !pendingDraw"
             :urgent="isCardPlayable(card) && !!pendingDraw"
+            :jump-in="!isCardPlayable(card) && isJumpInEligible(card)"
             animate-in="deal"
             :style="{ animationDelay: `${idx * 35}ms` }"
             @click="onCardClick(card)"

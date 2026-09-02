@@ -29,7 +29,14 @@ function requireDb() {
   if (!db) throw new Error('Firebase is not configured. Add your keys to .env and restart the dev server.')
 }
 
-export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE, mode = 'classic', mercyLimit }) {
+export async function createRoom({
+  uid,
+  name,
+  targetScore = DEFAULT_TARGET_SCORE,
+  mode = 'classic',
+  mercyLimit,
+  jumpInEnabled = false,
+}) {
   requireDb()
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const code = generateInviteCode()
@@ -46,6 +53,7 @@ export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE
       // Only meaningful for No Mercy (the Mercy elimination threshold), but
       // harmless to always store — classic's createRound ignores it.
       ...(mercyLimit ? { mercyLimit } : {}),
+      jumpInEnabled,
       players: [{ uid, name, joinedAt: Date.now() }],
       game: null,
     })
@@ -110,7 +118,11 @@ export async function startGame({ code, hostUid }) {
     if (room.hostUid !== hostUid) throw new Error('Only the host can start the game.')
     if (room.players.length < MIN_PLAYERS) throw new Error(`Need at least ${MIN_PLAYERS} players.`)
     const engine = getEngine(room.mode)
-    const game = engine.createRound(room.players, { targetScore: room.targetScore, mercyLimit: room.mercyLimit })
+    const game = engine.createRound(room.players, {
+      targetScore: room.targetScore,
+      mercyLimit: room.mercyLimit,
+      jumpInEnabled: room.jumpInEnabled,
+    })
     tx.update(ref, { status: 'playing', game })
   })
 }
@@ -133,6 +145,12 @@ async function mutateGame(code, mutator) {
 
 export const playCard = (code, uid, cardId, chosenColor, swapTargetUid) =>
   mutateGame(code, (engine, game) => engine.playCard(game, uid, cardId, chosenColor, swapTargetUid))
+
+// House rule: playing a card out of turn when it matches the top of the
+// discard pile exactly. Only meaningful when the room's jumpInEnabled flag
+// was on at round creation — the engine itself enforces that.
+export const jumpIn = (code, uid, cardId, chosenColor, swapTargetUid) =>
+  mutateGame(code, (engine, game) => engine.jumpIn(game, uid, cardId, chosenColor, swapTargetUid))
 
 export const drawCard = (code, uid) => mutateGame(code, (engine, game) => engine.drawCard(game, uid))
 

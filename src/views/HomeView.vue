@@ -21,6 +21,7 @@ const joinCode = ref('')
 const gameMode = ref('classic') // 'classic' | 'no-mercy' — host-chosen ruleset for a new room
 const targetScore = ref(CLASSIC_DEFAULT_SCORE)
 const mercyLimit = ref(DEFAULT_MERCY_LIMIT) // No Mercy only: hand size that knocks a player out
+const jumpInEnabled = ref(false) // House rule, either mode: play an exact-match card out of turn
 const loading = ref(false)
 const error = ref('')
 
@@ -54,6 +55,7 @@ async function submit() {
         targetScore: targetScore.value,
         mode: gameMode.value,
         mercyLimit: gameMode.value === 'no-mercy' ? mercyLimit.value : undefined,
+        jumpInEnabled: jumpInEnabled.value,
       })
       router.push({ name: 'room', params: { code } })
     } else {
@@ -163,6 +165,31 @@ async function submit() {
               {{ s }} pts
             </button>
           </div>
+        </div>
+
+        <div v-if="mode === 'create'" class="mb-5">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left transition"
+            :class="jumpInEnabled ? 'border-uno-yellow bg-uno-yellow/10' : 'border-white/10 hover:border-white/20'"
+            @click="jumpInEnabled = !jumpInEnabled"
+          >
+            <span>
+              <span class="block text-sm font-semibold" :class="jumpInEnabled ? 'text-uno-yellow' : 'text-slate-300'">Jump-In</span>
+              <span class="block text-[10px] font-normal text-slate-500">
+                Play an exact color+number/symbol match out of turn, any time
+              </span>
+            </span>
+            <span
+              class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+              :class="jumpInEnabled ? 'bg-uno-yellow' : 'bg-slate-700'"
+            >
+              <span
+                class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                :class="jumpInEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'"
+              ></span>
+            </span>
+          </button>
         </div>
 
         <div v-if="mode === 'create' && gameMode === 'no-mercy'" class="mb-5">

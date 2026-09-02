@@ -8,6 +8,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   glow: { type: Boolean, default: false }, // gentle "you can play this" ring
   urgent: { type: Boolean, default: false }, // "you must stack this" ring
+  jumpIn: { type: Boolean, default: false }, // cyan "you can jump in with this, out of turn" ring
   flash: { type: String, default: '' }, // '', 'yellow', 'red' — strobing "you must draw" border
   animateIn: { type: String, default: '' }, // '', 'deal', 'flip', 'fly', 'pop'
   tintColor: { type: String, default: '' }, // hex color: recolors a Wild/Wild+4's white artwork once a color has been chosen
@@ -70,7 +71,7 @@ const showTint = computed(() => props.card && (props.card.type === 'wild' || pro
     class="relative select-none transition-transform"
     :class="[
       sizes[size],
-      playable && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
+      (playable || jumpIn) && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
       flash === 'red'
         ? 'animate-flash-red'
         : flash === 'yellow'
@@ -79,7 +80,9 @@ const showTint = computed(() => props.card && (props.card.type === 'wild' || pro
             ? 'animate-stack-pulse'
             : glow
               ? 'animate-ring-pulse'
-              : '',
+              : jumpIn
+                ? 'animate-jump-pulse'
+                : '',
     ]"
   >
     <!--
@@ -104,7 +107,9 @@ const showTint = computed(() => props.card && (props.card.type === 'wild' || pro
               ? 'border-uno-red'
               : glow
                 ? 'border-uno-yellow'
-                : 'border-white/80',
+                : jumpIn
+                  ? 'border-cyan-400'
+                  : 'border-white/80',
       ]"
     >
       <template v-if="!card">

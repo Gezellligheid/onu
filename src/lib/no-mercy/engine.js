@@ -43,6 +43,26 @@ export function isPlayableNow(card, state) {
   return isPlayable(card, topCard(state), state.currentColor)
 }
 
+/**
+ * House rule: Jump-In. If enabled and it's currently "open" play (no
+ * pending stack/roulette/drawn-card decision blocking things), any card
+ * matching the discard pile's top card EXACTLY — same color AND same
+ * number/symbol — can be played immediately by whoever holds it, even out
+ * of turn. https://matteluno.fandom.com/wiki/Jump-In
+ */
+export function isJumpInMatch(card, state) {
+  if (!state.jumpInEnabled || state.status !== 'playing') return false
+  if (state.pendingDraw || state.pendingRoulette || state.pendingDrawnChoice) return false
+  const top = topCard(state)
+  if (!top) return false
+  return card.color === top.color && card.type === top.type && card.value === top.value
+}
+
+export function canJumpIn(state, uid) {
+  const hand = state.hands[uid]
+  return !!hand && hand.some((c) => isJumpInMatch(c, state))
+}
+
 function activePlayers(state) {
   return state.playerOrder.filter((uid) => !state.eliminated[uid])
 }
@@ -91,7 +111,13 @@ function drawOne(state) {
 
 export function createRound(
   players,
-  { targetScore = DEFAULT_TARGET_SCORE, mercyLimit = DEFAULT_MERCY_LIMIT, scores = {}, roundNumber = 1 } = {},
+  {
+    targetScore = DEFAULT_TARGET_SCORE,
+    mercyLimit = DEFAULT_MERCY_LIMIT,
+    jumpInEnabled = false,
+    scores = {},
+    roundNumber = 1,
+  } = {},
 ) {
   const playerOrder = players.map((p) => p.uid)
   const hands = {}
@@ -135,6 +161,7 @@ export function createRound(
     scores: nextScores,
     targetScore,
     mercyLimit,
+    jumpInEnabled,
     roundNumber,
     lastAction: { type: 'round-start', message: 'New round dealt.' },
     lastDraw: null,
@@ -406,6 +433,32 @@ export function playCard(state, uid, cardId, chosenColor, swapTargetUid) {
 }
 
 /**
+ * Plays a card out of turn (see isJumpInMatch above). "Play immediately
+ * proceeds to the player after the person who jumped in" — implemented by
+ * jumping the turn to the jumper first, then running the exact same
+ * playCard logic as a normal turn from there.
+ */
+export function jumpIn(state, uid, cardId, chosenColor, swapTargetUid) {
+  if (state.eliminated[uid]) throw new Error('You have been knocked out of this round.')
+  if (!isJumpInMatch(state.hands[uid]?.find((c) => c.id === cardId), state)) {
+    throw new Error('That card cannot jump in right now.')
+  }
+  if (currentPlayerId(state) === uid) throw new Error('It is already your turn — just play it normally.')
+
+  const jumped = clone(state)
+  jumped.currentIndex = jumped.playerOrder.indexOf(uid)
+  const result = playCard(jumped, uid, cardId, chosenColor, swapTargetUid)
+  if (result.lastAction) {
+    result.lastAction = {
+      ...result.lastAction,
+      jumpIn: true,
+      message: `${nameFor(result, uid)} jumps in! ${result.lastAction.message}`,
+    }
+  }
+  return result
+}
+
+/**
  * Draws exactly one card (matches the classic engine's click-per-draw
  * pacing). Three situations:
  *  - A pending Draw stack: this card counts against the total; once it's
@@ -552,6 +605,7 @@ export function startNextRound(state) {
   return createRound(state.players, {
     targetScore: state.targetScore,
     mercyLimit: state.mercyLimit,
+    jumpInEnabled: state.jumpInEnabled,
     scores: state.scores,
     roundNumber: state.roundNumber + 1,
   })
