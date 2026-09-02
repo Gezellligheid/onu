@@ -4,7 +4,13 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
 import { DEFAULT_TARGET_SCORE as CLASSIC_DEFAULT_SCORE } from '../lib/uno/constants.js'
-import { DEFAULT_TARGET_SCORE as NO_MERCY_DEFAULT_SCORE, TARGET_SCORE_OPTIONS as NO_MERCY_SCORE_OPTIONS } from '../lib/no-mercy/constants.js'
+import {
+  DEFAULT_TARGET_SCORE as NO_MERCY_DEFAULT_SCORE,
+  TARGET_SCORE_OPTIONS as NO_MERCY_SCORE_OPTIONS,
+  DEFAULT_MERCY_LIMIT,
+  MERCY_LIMIT_MIN,
+  MERCY_LIMIT_MAX,
+} from '../lib/no-mercy/constants.js'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -15,11 +21,17 @@ const name = ref(auth.name || '')
 const joinCode = ref('')
 const gameMode = ref('classic') // 'classic' | 'no-mercy' — host-chosen ruleset for a new room
 const targetScore = ref(CLASSIC_DEFAULT_SCORE)
+const mercyLimit = ref(DEFAULT_MERCY_LIMIT) // No Mercy only: hand size that knocks a player out
 const loading = ref(false)
 const error = ref('')
 
 const CLASSIC_SCORE_OPTIONS = [200, 300, 500]
 const scoreOptions = computed(() => (gameMode.value === 'no-mercy' ? NO_MERCY_SCORE_OPTIONS : CLASSIC_SCORE_OPTIONS))
+
+function clampMercyLimit() {
+  const n = Math.round(Number(mercyLimit.value))
+  mercyLimit.value = Number.isFinite(n) ? Math.min(MERCY_LIMIT_MAX, Math.max(MERCY_LIMIT_MIN, n)) : DEFAULT_MERCY_LIMIT
+}
 
 watch(gameMode, (m) => {
   targetScore.value = m === 'no-mercy' ? NO_MERCY_DEFAULT_SCORE : CLASSIC_DEFAULT_SCORE
@@ -36,7 +48,14 @@ async function submit() {
   try {
     const user = await auth.signIn(trimmedName)
     if (mode.value === 'create') {
-      const code = await room.create({ uid: user.uid, name: trimmedName, targetScore: targetScore.value, mode: gameMode.value })
+      if (gameMode.value === 'no-mercy') clampMercyLimit()
+      const code = await room.create({
+        uid: user.uid,
+        name: trimmedName,
+        targetScore: targetScore.value,
+        mode: gameMode.value,
+        mercyLimit: gameMode.value === 'no-mercy' ? mercyLimit.value : undefined,
+      })
       router.push({ name: 'room', params: { code } })
     } else {
       const code = joinCode.value.trim().toUpperCase()
@@ -147,7 +166,23 @@ async function submit() {
           </div>
         </div>
 
-        <div v-else class="mb-5">
+        <div v-if="mode === 'create' && gameMode === 'no-mercy'" class="mb-5">
+          <label class="mb-1 block text-sm font-medium text-slate-300">Mercy limit</label>
+          <input
+            v-model.number="mercyLimit"
+            type="number"
+            :min="MERCY_LIMIT_MIN"
+            :max="MERCY_LIMIT_MAX"
+            step="1"
+            @blur="clampMercyLimit"
+            class="w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-slate-100 outline-none ring-uno-red/60 focus:ring-2"
+          />
+          <p class="mt-1 px-1 text-[11px] text-slate-500">
+            Cards in hand before you're knocked out for the round ({{ MERCY_LIMIT_MIN }}-{{ MERCY_LIMIT_MAX }}).
+          </p>
+        </div>
+
+        <div v-if="mode === 'join'" class="mb-5">
           <label class="mb-1 block text-sm font-medium text-slate-300">Invite code</label>
           <input
             v-model="joinCode"

@@ -537,6 +537,67 @@ function spawnLabel(from, to, kind) {
   }, 620)
 }
 
+// ---- Wild Color Roulette reveal arch: per the rules the revealed cards are
+// public — everyone at the table watches them come up, not just the player
+// hunting for their color. They land in a shared arch (visible to every
+// viewer, not just the affected player) before being swept into that
+// player's hand, instead of just silently appearing there. ----
+const REVEAL_CARD_PX = 64 // matches PlayingCard size="md"
+const REVEAL_STAGGER_MS = 260 // one-card-at-a-time reveal, like actually flipping them off the draw pile
+const ROULETTE_HOLD_MS = 1200 // pause after the LAST card lands so everyone can read the full arch
+const rouletteReveal = ref(null) // { cards, total, targetUid, color } while the arch is on screen
+const rouletteArchEl = ref(null)
+let rouletteRevealTimers = []
+
+function clearRouletteRevealTimers() {
+  rouletteRevealTimers.forEach(clearTimeout)
+  rouletteRevealTimers = []
+}
+
+// Card positions are keyed off the FINAL count from the start, so earlier
+// cards don't shift around as later ones fill in beside them.
+function revealCardStyle(i, total) {
+  if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
+  const mid = (total - 1) / 2
+  const offset = i - mid
+  const spacing = Math.min(40, 300 / (total - 1))
+  const rotate = offset * Math.min(5, 30 / total)
+  const x = offset * spacing
+  return { transform: `translateX(calc(-50% + ${x}px)) rotate(${rotate}deg)`, zIndex: i }
+}
+
+function triggerRouletteReveal(la) {
+  clearRouletteRevealTimers()
+  const cards = la.revealedCards
+  rouletteReveal.value = { cards: [], total: cards.length, targetUid: la.by, color: la.color }
+
+  // Reveal one card at a time (each gets its own flip-in as it's appended),
+  // same pacing as physically turning cards off the draw pile one by one.
+  cards.forEach((card, i) => {
+    rouletteRevealTimers.push(
+      setTimeout(() => {
+        if (!rouletteReveal.value) return // superseded by a newer reveal
+        rouletteReveal.value = { ...rouletteReveal.value, cards: [...rouletteReveal.value.cards, card] }
+      }, i * REVEAL_STAGGER_MS),
+    )
+  })
+
+  const fillDuration = cards.length * REVEAL_STAGGER_MS
+  rouletteRevealTimers.push(
+    setTimeout(() => {
+      if (rouletteArchEl.value) {
+        spawnFlyBatch({ el: rouletteArchEl.value, size: REVEAL_CARD_PX, alignLeft: false }, endpointFor(la.by), cards, 70)
+      }
+      const clearDelay = cards.length * 70 + 450
+      rouletteRevealTimers.push(
+        setTimeout(() => {
+          rouletteReveal.value = null
+        }, clearDelay),
+      )
+    }, fillDuration + ROULETTE_HOLD_MS),
+  )
+}
+
 // A brief, big "BLOCKED!" flash shown only to the player who got skipped.
 const blockedFlash = ref(false)
 let blockedFlashTimer = null
@@ -678,9 +739,15 @@ watch(
     if (la?.type === 'discardAll' && la.dumpedCards?.length && discardPileEl.value) {
       spawnFlyBatch(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.dumpedCards)
     }
-    if (g.lastDraw && drawPileEl.value) {
+    // Roulette's reveal is handled separately below (public arch first,
+    // hand second) instead of the generic straight-to-hand fly every other
+    // forced draw uses.
+    if (g.lastDraw && drawPileEl.value && la?.type !== 'roulette-resolved') {
       const from = { el: drawPileEl.value, size: PILE_CARD_PX, alignLeft: false }
       spawnFlyBatch(from, endpointFor(g.lastDraw.by), g.lastDraw.cardIds.map(() => null))
+    }
+    if (la?.type === 'roulette-resolved' && la.revealedCards?.length) {
+      triggerRouletteReveal(la)
     }
 
     if (la?.type === 'uno-call' && tableCenterEl.value) {
@@ -883,6 +950,7 @@ onBeforeUnmount(() => {
   clearAfk()
   clearTimeout(toastTimer)
   clearTimeout(blockedFlashTimer)
+  clearRouletteRevealTimers()
 })
 </script>
 
@@ -966,6 +1034,29 @@ onBeforeUnmount(() => {
             (auto in {{ afkSecondsLeft }}s)
           </span>
         </p>
+
+        <!--
+          Wild Color Roulette reveal arch — per the rules the revealed cards
+          are public, so everyone at the table sees them land here, in the
+          open, before they get swept into the hunting player's hand.
+        -->
+        <div v-if="rouletteReveal" class="flex flex-col items-center gap-2 animate-pop">
+          <span class="rounded-full bg-slate-950/90 px-3 py-1 text-xs font-semibold text-slate-200 shadow">
+            Hunting for
+            <span class="font-bold capitalize" :style="{ color: COLOR_HEX[rouletteReveal.color] }">{{ rouletteReveal.color }}</span>
+            …
+          </span>
+          <div ref="rouletteArchEl" class="relative" :style="{ height: '96px', width: '100%' }">
+            <div
+              v-for="(card, i) in rouletteReveal.cards"
+              :key="card.id"
+              class="absolute left-1/2 top-0 origin-bottom animate-flip-in"
+              :style="revealCardStyle(i, rouletteReveal.total)"
+            >
+              <PlayingCard :card="card" size="md" />
+            </div>
+          </div>
+        </div>
 
         <div class="relative flex items-center justify-center" style="width: 440px; height: 280px">
           <!-- Big circular direction arrow, mirrored when play reverses -->

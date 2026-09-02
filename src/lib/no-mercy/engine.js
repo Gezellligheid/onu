@@ -3,7 +3,7 @@ import { shuffle, clone } from '../uno/shared.js'
 import {
   COLORS,
   STARTING_HAND_SIZE,
-  MERCY_LIMIT,
+  DEFAULT_MERCY_LIMIT,
   KNOCKOUT_BONUS,
   NO_UNO_CALL_PENALTY,
   DRAW_VALUE,
@@ -88,7 +88,10 @@ function drawOne(state) {
   return state.drawPile.pop()
 }
 
-export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, scores = {}, roundNumber = 1 } = {}) {
+export function createRound(
+  players,
+  { targetScore = DEFAULT_TARGET_SCORE, mercyLimit = DEFAULT_MERCY_LIMIT, scores = {}, roundNumber = 1 } = {},
+) {
   const playerOrder = players.map((p) => p.uid)
   const hands = {}
   let deck = shuffle(buildDeck())
@@ -130,6 +133,7 @@ export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, score
     unoCalled: Object.fromEntries(playerOrder.map((uid) => [uid, false])),
     scores: nextScores,
     targetScore,
+    mercyLimit,
     roundNumber,
     lastAction: { type: 'round-start', message: 'New round dealt.' },
     lastDraw: null,
@@ -199,7 +203,7 @@ function eliminate(state, uid) {
 /**
  * Call after any action that could change a hand's size: resets the UNO
  * call once you're no longer sitting on exactly one card, and checks for a
- * win (0 cards) or a Mercy knockout (25+).
+ * win (0 cards) or a Mercy knockout (state.mercyLimit+).
  */
 function checkHandOutcome(state, uid) {
   if (state.status !== 'playing') return
@@ -208,7 +212,7 @@ function checkHandOutcome(state, uid) {
   if (hand.length !== 1) state.unoCalled[uid] = false
   if (hand.length === 0) {
     finishRound(state, uid)
-  } else if (hand.length >= MERCY_LIMIT) {
+  } else if (hand.length >= state.mercyLimit) {
     eliminate(state, uid)
   }
 }
@@ -479,6 +483,8 @@ export function chooseRouletteColor(state, uid, color) {
   next.lastAction = {
     type: 'roulette-resolved',
     by: uid,
+    color,
+    revealedCards: revealed,
     message: `${nameFor(next, uid)} reveals ${revealed.length} card(s) hunting for ${color} and is skipped!`,
   }
   checkHandOutcome(next, uid)
@@ -527,6 +533,7 @@ export function startNextRound(state) {
   if (state.status !== 'round-over') throw new Error('Current round has not finished.')
   return createRound(state.players, {
     targetScore: state.targetScore,
+    mercyLimit: state.mercyLimit,
     scores: state.scores,
     roundNumber: state.roundNumber + 1,
   })

@@ -14,8 +14,8 @@ export const useRoomStore = defineStore('room', {
     isHost: (state) => (uid) => state.room?.hostUid === uid,
   },
   actions: {
-    async create({ uid, name, targetScore, mode }) {
-      const code = await roomLib.createRoom({ uid, name, targetScore, mode })
+    async create({ uid, name, targetScore, mode, mercyLimit }) {
+      const code = await roomLib.createRoom({ uid, name, targetScore, mode, mercyLimit })
       this.watch(code)
       return code
     },

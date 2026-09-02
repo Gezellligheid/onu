@@ -29,7 +29,10 @@ const canStart = computed(() => props.room.players.length >= MIN_PLAYERS)
     <div class="rounded-2xl border border-white/10 bg-white/5 p-5">
       <div class="mb-3 flex items-center justify-between">
         <p class="font-display font-semibold text-slate-200">Players ({{ room.players.length }})</p>
-        <p class="text-xs text-slate-500">Playing to {{ room.targetScore }} pts</p>
+        <p class="text-right text-xs text-slate-500">
+          Playing to {{ room.targetScore }} pts
+          <span v-if="room.mode === 'no-mercy'"><br />Mercy limit: {{ room.mercyLimit ?? 25 }} cards</span>
+        </p>
       </div>
       <ul class="space-y-2">
         <li

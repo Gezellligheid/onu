@@ -29,7 +29,7 @@ function requireDb() {
   if (!db) throw new Error('Firebase is not configured. Add your keys to .env and restart the dev server.')
 }
 
-export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE, mode = 'classic' }) {
+export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE, mode = 'classic', mercyLimit }) {
   requireDb()
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const code = generateInviteCode()
@@ -43,6 +43,9 @@ export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE
       createdAt: serverTimestamp(),
       targetScore,
       mode,
+      // Only meaningful for No Mercy (the Mercy elimination threshold), but
+      // harmless to always store — classic's createRound ignores it.
+      ...(mercyLimit ? { mercyLimit } : {}),
       players: [{ uid, name, joinedAt: Date.now() }],
       game: null,
     })
@@ -107,7 +110,7 @@ export async function startGame({ code, hostUid }) {
     if (room.hostUid !== hostUid) throw new Error('Only the host can start the game.')
     if (room.players.length < MIN_PLAYERS) throw new Error(`Need at least ${MIN_PLAYERS} players.`)
     const engine = getEngine(room.mode)
-    const game = engine.createRound(room.players, { targetScore: room.targetScore })
+    const game = engine.createRound(room.players, { targetScore: room.targetScore, mercyLimit: room.mercyLimit })
     tx.update(ref, { status: 'playing', game })
   })
 }
