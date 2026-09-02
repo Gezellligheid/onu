@@ -95,14 +95,13 @@ function isCardPlayable(card) {
 
 // Your own hand fans out in a slight arc, center raised — like cards held
 // in two hands — instead of a flat overlapping row. The arc widens as you
-// draw more cards (using up to the full screen width) and starts getting
-// denser once it would otherwise run off the edge of the screen — but only
-// down to HAND_MIN_SPACING, so cards stay individually visible/clickable
-// instead of compressing down to nothing. No Mercy hands can get huge (the
-// Mercy limit has no cap), so once even that floor doesn't fit, the hand
-// becomes a horizontally scrollable strip rather than spilling off-screen.
+// draw more cards (using up to the full screen width) and packs denser once
+// it would otherwise run off the edge of the screen. No Mercy hands can get
+// huge (the Mercy limit has no cap), so density alone isn't enough once
+// spacing gets tiny — hovering near a card then ripples it and ~4 neighbors
+// apart (see RIPPLE_* below) so you can still pick out and click the one you
+// want, without ever needing a scrollbar.
 const HAND_MAX_SPACING = 81
-const HAND_MIN_SPACING = 26
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
 function onResize() {
   viewportWidth.value = window.innerWidth
@@ -111,42 +110,75 @@ onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48))
+const HAND_EDGE_PAD = 12
 
+// No floor here on purpose — the whole fan always has to fit in
+// handAvailableWidth with zero scrolling, however dense that makes it. The
+// spacing is between CARD CENTERS, but each card is HAND_CARD_PX wide, so a
+// card's edge sticks out half its width past its center — that overhang has
+// to come out of the available width too, or the outermost cards still run
+// off-screen even though their centers technically fit.
 function handSpacing(total) {
   if (total <= 1) return HAND_MAX_SPACING
-  const fit = handAvailableWidth.value / (total - 1)
-  return Math.min(HAND_MAX_SPACING, Math.max(HAND_MIN_SPACING, fit))
+  const fit = (handAvailableWidth.value - HAND_CARD_PX - HAND_EDGE_PAD) / (total - 1)
+  return Math.min(HAND_MAX_SPACING, Math.max(0, fit))
 }
-// Capped so the droop never outgrows the fan's fixed-height box (260px) —
-// without this, a big hand's edge cards would need a taller box than that,
-// which would fight with the horizontal scroll wrapper below (a container
-// can't scroll on one axis while staying freely "overflow: visible" on the
-// other; the browser forces both to behave the same way).
+// Capped so the droop never outgrows the fan's fixed-height box (260px).
 const HAND_Y_DROOP_CAP = 40
+
+// ---- Hover ripple: which card the mouse is currently over parts it and its
+// nearest neighbors apart (and lifts/enlarges them) so a densely packed hand
+// stays fully clickable — this is what replaces scrolling. ----
+const hoverCardIndex = ref(null)
+const RIPPLE_RADIUS = 2.4 // ~5 cards feel it (the hovered one + 2 each side)
+const RIPPLE_PUSH = 46 // px the nearest neighbors get shoved apart, at peak
+const RIPPLE_LIFT = 20 // px risen up, at peak
+const RIPPLE_SCALE = 0.14 // extra scale, at peak
+function onCardHoverEnter(i) {
+  hoverCardIndex.value = i
+}
+function onCardHoverLeave(i) {
+  if (hoverCardIndex.value === i) hoverCardIndex.value = null
+}
+
 function handCardStyle(i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
   const offset = i - mid
   const spacing = handSpacing(total)
   const rotate = offset * Math.min(6, 46 / total)
-  const x = offset * spacing
-  const y = Math.min(HAND_Y_DROOP_CAP, offset * offset * Math.min(3.4, 22 / total))
+  let x = offset * spacing
+  let y = Math.min(HAND_Y_DROOP_CAP, offset * offset * Math.min(3.4, 22 / total))
+  let scale = 1
+  let z = i
+
+  const hovered = hoverCardIndex.value
+  if (hovered !== null) {
+    const dist = i - hovered
+    const absDist = Math.abs(dist)
+    if (absDist <= RIPPLE_RADIUS) {
+      // Eased falloff (1 at the hovered card, 0 at the edge of the ripple) —
+      // squaring gives a snappier, more "parted" feel than a linear fade.
+      const eased = (1 - absDist / RIPPLE_RADIUS) ** 2
+      x += Math.sign(dist) * eased * RIPPLE_PUSH
+      y -= eased * RIPPLE_LIFT
+      scale = 1 + eased * RIPPLE_SCALE
+      z = 200 + Math.round(eased * 50)
+    }
+  }
+
   return {
-    transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg)`,
-    zIndex: i,
+    transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg) scale(${scale})`,
+    zIndex: z,
   }
 }
-// Natural width of the full fan at its current spacing — may exceed the
-// viewport once spacing bottoms out at HAND_MIN_SPACING, in which case the
-// scroll wrapper below takes over instead of letting cards run off-screen.
+// Natural width of the fan at its (always screen-safe) dense spacing —
+// mirrors the same card-overhang + edge-pad accounting as handSpacing, so
+// this never exceeds handAvailableWidth.
 const handFanWidth = computed(() => {
   const n = myHand.value.length
-  return Math.max(n - 1, 0) * handSpacing(n) + HAND_CARD_PX + 26
+  return Math.max(n - 1, 0) * handSpacing(n) + HAND_CARD_PX + HAND_EDGE_PAD
 })
-// The visible scroll viewport: never wider than the fan itself (so a small
-// hand doesn't leave dead space) and never wider than the screen allows.
-const handViewportWidth = computed(() => Math.min(handFanWidth.value, handAvailableWidth.value))
-const handOverflows = computed(() => handFanWidth.value > handAvailableWidth.value)
 
 const noPlayableCards = computed(() => {
   const g = game.value
@@ -1154,38 +1186,33 @@ onBeforeUnmount(() => {
           UNO!
         </button>
       </div>
-      <!--
-        The scroll wrapper is what "my hand" endpoint animations anchor to
-        (always on-screen, regardless of scroll position) — the inner div is
-        the fan's true, possibly screen-exceeding, natural width.
-      -->
       <div
-        class="pointer-events-auto overflow-x-auto overflow-y-visible"
-        :style="{ width: `${handViewportWidth}px`, height: '260px' }"
+        class="pointer-events-auto relative"
+        :style="{ width: `${handFanWidth}px`, height: '260px' }"
         ref="myHandEl"
+        @mouseleave="hoverCardIndex = null"
       >
-        <div class="relative" :style="{ width: `${handFanWidth}px`, height: '260px' }">
-          <div
-            v-for="(card, idx) in sortedHand"
-            :key="card.id"
-            class="absolute left-1/2 top-4 origin-bottom transition-transform duration-300 hover:z-30"
-            :style="handCardStyle(idx, sortedHand.length)"
-          >
-            <PlayingCard
-              :card="card"
-              size="xl"
-              :playable="isCardPlayable(card)"
-              :disabled="!isCardPlayable(card)"
-              :glow="isCardPlayable(card) && !pendingDraw"
-              :urgent="isCardPlayable(card) && !!pendingDraw"
-              animate-in="deal"
-              :style="{ animationDelay: `${idx * 35}ms` }"
-              @click="onCardClick(card)"
-            />
-          </div>
+        <div
+          v-for="(card, idx) in sortedHand"
+          :key="card.id"
+          class="absolute left-1/2 top-4 origin-bottom transition-transform duration-150"
+          :style="handCardStyle(idx, sortedHand.length)"
+          @mouseenter="onCardHoverEnter(idx)"
+          @mouseleave="onCardHoverLeave(idx)"
+        >
+          <PlayingCard
+            :card="card"
+            size="xl"
+            :playable="isCardPlayable(card)"
+            :disabled="!isCardPlayable(card)"
+            :glow="isCardPlayable(card) && !pendingDraw"
+            :urgent="isCardPlayable(card) && !!pendingDraw"
+            animate-in="deal"
+            :style="{ animationDelay: `${idx * 35}ms` }"
+            @click="onCardClick(card)"
+          />
         </div>
       </div>
-      <p v-if="handOverflows" class="pointer-events-none mt-0.5 text-[10px] text-slate-500">← scroll for more →</p>
     </div>
 
     <!-- Flying card / label overlay -->
