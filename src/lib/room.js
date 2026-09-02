@@ -8,8 +8,8 @@ import {
   collection,
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
-import * as engine from './uno/engine.js'
-import { DEFAULT_TARGET_SCORE, MAX_PLAYERS, MIN_PLAYERS } from './uno/constants.js'
+import { getEngine } from './uno/modes.js'
+import { DEFAULT_TARGET_SCORE, MIN_PLAYERS } from './uno/constants.js'
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I to avoid ambiguity
 
@@ -29,7 +29,7 @@ function requireDb() {
   if (!db) throw new Error('Firebase is not configured. Add your keys to .env and restart the dev server.')
 }
 
-export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE }) {
+export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE, mode = 'classic' }) {
   requireDb()
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const code = generateInviteCode()
@@ -42,6 +42,7 @@ export async function createRoom({ uid, name, targetScore = DEFAULT_TARGET_SCORE
       status: 'lobby',
       createdAt: serverTimestamp(),
       targetScore,
+      mode,
       players: [{ uid, name, joinedAt: Date.now() }],
       game: null,
     })
@@ -64,7 +65,6 @@ export async function joinRoom({ code, uid, name }) {
       tx.update(ref, { players })
       return
     }
-    if (room.players.length >= MAX_PLAYERS) throw new Error('This room is full.')
     tx.update(ref, { players: [...room.players, { uid, name, joinedAt: Date.now() }] })
   })
   return code.toUpperCase()
@@ -106,6 +106,7 @@ export async function startGame({ code, hostUid }) {
     const room = snap.data()
     if (room.hostUid !== hostUid) throw new Error('Only the host can start the game.')
     if (room.players.length < MIN_PLAYERS) throw new Error(`Need at least ${MIN_PLAYERS} players.`)
+    const engine = getEngine(room.mode)
     const game = engine.createRound(room.players, { targetScore: room.targetScore })
     tx.update(ref, { status: 'playing', game })
   })
@@ -119,27 +120,36 @@ async function mutateGame(code, mutator) {
     if (!snap.exists()) throw new Error('Room not found.')
     const room = snap.data()
     if (!room.game) throw new Error('Game has not started.')
-    const nextGame = mutator(room.game)
+    const engine = getEngine(room.game.mode)
+    const nextGame = mutator(engine, room.game)
     const patch = { game: nextGame }
     if (nextGame.status === 'game-over') patch.status = 'finished'
     tx.update(ref, patch)
   })
 }
 
-export const playCard = (code, uid, cardId, chosenColor) =>
-  mutateGame(code, (game) => engine.playCard(game, uid, cardId, chosenColor))
+export const playCard = (code, uid, cardId, chosenColor, swapTargetUid) =>
+  mutateGame(code, (engine, game) => engine.playCard(game, uid, cardId, chosenColor, swapTargetUid))
 
-export const drawCard = (code, uid) => mutateGame(code, (game) => engine.drawCard(game, uid))
+export const drawCard = (code, uid) => mutateGame(code, (engine, game) => engine.drawCard(game, uid))
 
-export const passTurn = (code, uid) => mutateGame(code, (game) => engine.passTurn(game, uid))
+// Classic-only: no "keep and pass" choice exists in No Mercy.
+export const passTurn = (code, uid) => mutateGame(code, (engine, game) => engine.passTurn(game, uid))
 
-export const callUno = (code, uid) => mutateGame(code, (game) => engine.callUno(game, uid))
+export const callUno = (code, uid) => mutateGame(code, (engine, game) => engine.callUno(game, uid))
 
 export const catchUno = (code, catcherId, targetId) =>
-  mutateGame(code, (game) => engine.catchUno(game, catcherId, targetId))
+  mutateGame(code, (engine, game) => engine.catchUno(game, catcherId, targetId))
 
+// Classic-only: the No Mercy starter never lands on a Wild (it's reshuffled
+// away like every other action/wild starter), so there's no starting-color
+// choice to make in that mode.
 export const chooseStarterColor = (code, uid, color) =>
-  mutateGame(code, (game) => engine.chooseStarterColor(game, uid, color))
+  mutateGame(code, (engine, game) => engine.chooseStarterColor(game, uid, color))
+
+// No Mercy-only: resolving a pending Wild Color Roulette pick.
+export const chooseRouletteColor = (code, uid, color) =>
+  mutateGame(code, (engine, game) => engine.chooseRouletteColor(game, uid, color))
 
 export async function startNextRound(code) {
   requireDb()
@@ -149,6 +159,7 @@ export async function startNextRound(code) {
     if (!snap.exists()) throw new Error('Room not found.')
     const room = snap.data()
     if (!room.game) throw new Error('Game has not started.')
+    const engine = getEngine(room.game.mode)
     const nextGame = engine.startNextRound(room.game)
     tx.update(ref, { status: 'playing', game: nextGame })
   })

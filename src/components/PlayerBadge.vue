@@ -10,6 +10,7 @@ const props = defineProps({
   vulnerable: { type: Boolean, default: false }, // 1 card, hasn't called UNO
   canCatch: { type: Boolean, default: false },
   waitingOn: { type: Boolean, default: false }, // must respond to a pending draw stack
+  eliminated: { type: Boolean, default: false }, // No Mercy: knocked out (25+ cards), sitting out the rest of the round
 })
 defineEmits(['catch'])
 
@@ -26,9 +27,9 @@ function initials(n) {
 </script>
 
 <template>
-  <div class="relative flex flex-col items-center gap-0.5">
+  <div class="relative flex flex-col items-center gap-0.5" :class="eliminated ? 'opacity-40 grayscale' : ''">
     <div
-      v-if="isTurn"
+      v-if="isTurn && !eliminated"
       class="pointer-events-none absolute -inset-5 -z-10 animate-pulse rounded-full bg-uno-yellow/40 blur-xl"
       aria-hidden="true"
     ></div>
@@ -37,7 +38,7 @@ function initials(n) {
       <div
         class="flex h-12 w-12 items-center justify-center rounded-full border-2 font-display text-sm font-bold transition"
         :class="
-          isTurn
+          isTurn && !eliminated
             ? 'border-uno-yellow bg-uno-yellow/20 text-uno-yellow animate-turn-ring'
             : 'border-white/20 bg-slate-800 text-slate-300'
         "
@@ -50,13 +51,19 @@ function initials(n) {
         {{ cardCount }}
       </span>
       <span
-        v-if="vulnerable"
+        v-if="eliminated"
+        class="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-200 shadow"
+      >
+        OUT
+      </span>
+      <span
+        v-else-if="vulnerable"
         class="absolute -top-1.5 left-1/2 -translate-x-1/2 animate-pulse-glow rounded-full bg-uno-red px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow"
       >
         UNO!
       </span>
       <span
-        v-if="isTurn"
+        v-if="isTurn && !eliminated"
         class="absolute -bottom-3 left-1/2 -translate-x-1/2 text-uno-yellow drop-shadow"
         aria-hidden="true"
       >
@@ -64,14 +71,14 @@ function initials(n) {
       </span>
     </div>
     <div class="text-center leading-tight">
-      <p class="max-w-[6rem] truncate text-xs font-semibold" :class="isTurn ? 'text-uno-yellow' : 'text-slate-200'">
+      <p class="max-w-[6rem] truncate text-xs font-semibold" :class="isTurn && !eliminated ? 'text-uno-yellow' : 'text-slate-200'">
         {{ name }}
       </p>
       <p class="text-[10px] text-slate-500">{{ score }} pts</p>
     </div>
-    <p v-if="waitingOn" class="animate-pulse text-[10px] font-bold text-uno-red">must respond!</p>
+    <p v-if="waitingOn && !eliminated" class="animate-pulse text-[10px] font-bold text-uno-red">must respond!</p>
     <button
-      v-if="canCatch"
+      v-if="canCatch && !eliminated"
       type="button"
       class="animate-pulse-glow rounded-full bg-uno-red px-4 py-1.5 text-sm font-bold text-white shadow-lg hover:bg-red-600"
       @click="$emit('catch')"

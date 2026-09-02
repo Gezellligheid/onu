@@ -1,9 +1,10 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
-import { DEFAULT_TARGET_SCORE } from '../lib/uno/constants.js'
+import { DEFAULT_TARGET_SCORE as CLASSIC_DEFAULT_SCORE } from '../lib/uno/constants.js'
+import { DEFAULT_TARGET_SCORE as NO_MERCY_DEFAULT_SCORE, TARGET_SCORE_OPTIONS as NO_MERCY_SCORE_OPTIONS } from '../lib/no-mercy/constants.js'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -12,11 +13,17 @@ const room = useRoomStore()
 const mode = ref('create') // 'create' | 'join'
 const name = ref(auth.name || '')
 const joinCode = ref('')
-const targetScore = ref(DEFAULT_TARGET_SCORE)
+const gameMode = ref('classic') // 'classic' | 'no-mercy' — host-chosen ruleset for a new room
+const targetScore = ref(CLASSIC_DEFAULT_SCORE)
 const loading = ref(false)
 const error = ref('')
 
-const scoreOptions = [200, 300, 500]
+const CLASSIC_SCORE_OPTIONS = [200, 300, 500]
+const scoreOptions = computed(() => (gameMode.value === 'no-mercy' ? NO_MERCY_SCORE_OPTIONS : CLASSIC_SCORE_OPTIONS))
+
+watch(gameMode, (m) => {
+  targetScore.value = m === 'no-mercy' ? NO_MERCY_DEFAULT_SCORE : CLASSIC_DEFAULT_SCORE
+})
 
 async function submit() {
   error.value = ''
@@ -29,7 +36,7 @@ async function submit() {
   try {
     const user = await auth.signIn(trimmedName)
     if (mode.value === 'create') {
-      const code = await room.create({ uid: user.uid, name: trimmedName, targetScore: targetScore.value })
+      const code = await room.create({ uid: user.uid, name: trimmedName, targetScore: targetScore.value, mode: gameMode.value })
       router.push({ name: 'room', params: { code } })
     } else {
       const code = joinCode.value.trim().toUpperCase()
@@ -86,6 +93,38 @@ async function submit() {
           >
             Join Room
           </button>
+        </div>
+
+        <div v-if="mode === 'create'" class="mb-5">
+          <label class="mb-1 block text-sm font-medium text-slate-300">Game mode</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              class="rounded-lg border py-2 text-left text-sm font-semibold transition"
+              :class="
+                gameMode === 'classic'
+                  ? 'border-uno-yellow bg-uno-yellow/10 text-uno-yellow'
+                  : 'border-white/10 text-slate-400 hover:border-white/20'
+              "
+              @click="gameMode = 'classic'"
+            >
+              <span class="block px-1">Classic</span>
+              <span class="block px-1 text-[10px] font-normal text-slate-500">Standard UNO rules</span>
+            </button>
+            <button
+              type="button"
+              class="rounded-lg border py-2 text-left text-sm font-semibold transition"
+              :class="
+                gameMode === 'no-mercy'
+                  ? 'border-uno-red bg-uno-red/10 text-uno-red'
+                  : 'border-white/10 text-slate-400 hover:border-white/20'
+              "
+              @click="gameMode = 'no-mercy'"
+            >
+              <span class="block px-1">No Mercy</span>
+              <span class="block px-1 text-[10px] font-normal text-slate-500">Stacking, elimination, chaos</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="mode === 'create'" class="mb-5">

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
-import * as engine from '../lib/uno/engine.js'
+import { getEngine } from '../lib/uno/modes.js'
 import { sfx, unlockAudio, isMuted, setMuted } from '../lib/sound.js'
 import PlayingCard from './PlayingCard.vue'
 import PlayerBadge from './PlayerBadge.vue'
@@ -18,6 +18,8 @@ const roomStore = useRoomStore()
 const uid = computed(() => auth.uid)
 const room = computed(() => roomStore.room)
 const game = computed(() => roomStore.game)
+const isNoMercy = computed(() => game.value?.mode === 'no-mercy')
+const activeEngine = computed(() => getEngine(game.value?.mode))
 
 const muted = ref(isMuted())
 function toggleMute() {
@@ -53,20 +55,42 @@ const sortedHand = computed(() =>
     return a.type === 'number' ? a.value - b.value : 0
   }),
 )
-const top = computed(() => engine.topCard(game.value))
-const myTurn = computed(() => engine.isMyTurn(game.value, uid.value))
-const actionable = computed(() => (game.value ? engine.actionableUid(game.value) : null))
-const awaitingMyDrawDecision = computed(() => game.value.awaitingDrawDecision === uid.value)
+const top = computed(() => activeEngine.value.topCard(game.value))
+const myTurn = computed(() => activeEngine.value.isMyTurn(game.value, uid.value))
+const actionable = computed(() => (game.value ? activeEngine.value.actionableUid(game.value) : null))
+// Classic-only: "keep drawn card or pass" choice. No Mercy has no pass — a
+// drawn playable card is mandatory, tracked instead by pendingDrawnChoice.
+const awaitingMyDrawDecision = computed(() => !isNoMercy.value && game.value.awaitingDrawDecision === uid.value)
 const drawnCardId = computed(() => (awaitingMyDrawDecision.value ? myHand.value[myHand.value.length - 1]?.id : null))
-const startingColorChoiceIsMine = computed(() => game.value.pendingColorChoice === uid.value)
+const startingColorChoiceIsMine = computed(() => !isNoMercy.value && game.value.pendingColorChoice === uid.value)
+// No Mercy-only: Wild Color Roulette's color pick, and the "you must play
+// the card you just drew" lock (no keep-and-pass in this mode).
+const myRouletteChoice = computed(() => isNoMercy.value && game.value?.pendingRoulette === uid.value)
+const myDrawnChoice = computed(() =>
+  isNoMercy.value && game.value?.pendingDrawnChoice?.uid === uid.value ? game.value.pendingDrawnChoice : null,
+)
 const pendingDraw = computed(() => game.value.pendingDraw)
+const pendingDrawAmount = computed(() => {
+  const pd = pendingDraw.value
+  if (!pd) return 0
+  return isNoMercy.value ? pd.total : pd.count
+})
 const mustRespondToStack = computed(() => !!pendingDraw.value && actionable.value === uid.value)
 
 function isCardPlayable(card) {
-  if (game.value.status !== 'playing' || game.value.pendingColorChoice) return false
+  const g = game.value
+  if (g.status !== 'playing') return false
+  if (pendingSwapCard.value || pendingWildCard.value) return false
+  if (isNoMercy.value) {
+    if (g.pendingRoulette) return false
+    if (!myTurn.value || turnPauseActive.value) return false
+    if (myDrawnChoice.value) return card.id === myDrawnChoice.value.cardId
+    return activeEngine.value.isPlayableNow(card, g)
+  }
+  if (g.pendingColorChoice) return false
   if (!myTurn.value || turnPauseActive.value) return false
-  if (awaitingMyDrawDecision.value) return card.id === drawnCardId.value && engine.isPlayableNow(card, game.value)
-  return engine.isPlayableNow(card, game.value)
+  if (awaitingMyDrawDecision.value) return card.id === drawnCardId.value && activeEngine.value.isPlayableNow(card, g)
+  return activeEngine.value.isPlayableNow(card, g)
 }
 
 // Your own hand fans out in a slight arc, center raised — like cards held
@@ -106,12 +130,17 @@ const handFanWidth = computed(() => {
 })
 
 const noPlayableCards = computed(() => {
-  if (!myTurn.value || awaitingMyDrawDecision.value || game.value.pendingColorChoice) return false
-  return myHand.value.every((c) => !engine.isPlayableNow(c, game.value))
+  const g = game.value
+  if (isNoMercy.value) {
+    if (!myTurn.value || g.pendingDrawnChoice || g.pendingRoulette) return false
+    return myHand.value.every((c) => !activeEngine.value.isPlayableNow(c, g))
+  }
+  if (!myTurn.value || awaitingMyDrawDecision.value || g.pendingColorChoice) return false
+  return myHand.value.every((c) => !activeEngine.value.isPlayableNow(c, g))
 })
 
 const drawPileLabel = computed(() => {
-  if (mustRespondToStack.value) return `Draw ${pendingDraw.value.count}!`
+  if (mustRespondToStack.value) return `Draw ${pendingDrawAmount.value}!`
   if (noPlayableCards.value) return 'Draw!'
   return `${game.value.drawPile.length} left`
 })
@@ -119,6 +148,23 @@ const drawPileLabel = computed(() => {
 const turnBannerText = computed(() => {
   const g = game.value
   const nameOf = (id) => g.players.find((p) => p.uid === id)?.name ?? 'Player'
+  if (isNoMercy.value) {
+    if (pendingSwapCard.value) return 'Click a player to swap hands with!'
+    if (g.pendingRoulette) {
+      return g.pendingRoulette === uid.value ? 'Choose a color for Roulette!' : `${nameOf(g.pendingRoulette)} is spinning Color Roulette…`
+    }
+    if (g.pendingDrawnChoice) {
+      return g.pendingDrawnChoice.uid === uid.value ? 'Play the card you drew!' : `${nameOf(g.pendingDrawnChoice.uid)} must play their drawn card…`
+    }
+    if (g.pendingDraw) {
+      const target = g.playerOrder[g.currentIndex]
+      return target === uid.value
+        ? `Stack a ${g.pendingDraw.lastValue}+ or draw ${g.pendingDraw.total}!`
+        : `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
+    }
+    const cur = g.playerOrder[g.currentIndex]
+    return cur === uid.value ? 'Your turn' : `${nameOf(cur)}'s turn`
+  }
   if (g.pendingColorChoice) {
     return g.pendingColorChoice === uid.value ? 'Choose a color!' : `${nameOf(g.pendingColorChoice)} is choosing a color…`
   }
@@ -152,15 +198,17 @@ const opponents = computed(() => {
 })
 
 function playerInfo(id) {
-  const p = game.value.players.find((pl) => pl.uid === id)
+  const g = game.value
+  const p = g.players.find((pl) => pl.uid === id)
   return {
     uid: id,
     name: p?.name ?? 'Player',
-    cards: game.value.hands[id] || [],
-    score: game.value.scores[id] ?? 0,
+    cards: g.hands[id] || [],
+    score: g.scores[id] ?? 0,
     isTurn: actionable.value === id,
-    vulnerable: (game.value.hands[id]?.length ?? 0) === 1 && !game.value.unoCalled[id],
+    vulnerable: (g.hands[id]?.length ?? 0) === 1 && !g.unoCalled[id],
     waitingOn: !!pendingDraw.value && actionable.value === id,
+    eliminated: !!g.eliminated?.[id],
   }
 }
 
@@ -226,6 +274,17 @@ const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250
 function onCardClick(card) {
   unlockAudio()
   if (!isCardPlayable(card)) return
+  if (isNoMercy.value) {
+    // No Mercy's wild cards (Reverse Draw 4 / Draw 6 / Draw 10 / Color
+    // Roulette) have no color-choice step at all — only a 7 needs extra
+    // input, and that's chosen by clicking a seat at the table, not a modal.
+    if (card.type === 'number' && card.value === 7) {
+      pendingSwapCard.value = card
+      return
+    }
+    submitPlay(card.id, null)
+    return
+  }
   if (card.type === 'wild' || card.type === 'wild4') {
     pendingWildCard.value = card
     return
@@ -234,6 +293,17 @@ function onCardClick(card) {
 }
 
 const pendingWildCard = ref(null)
+const pendingSwapCard = ref(null)
+const swapCandidateUids = computed(() => {
+  const g = game.value
+  if (!g || !pendingSwapCard.value) return new Set()
+  return new Set(opponents.value.filter((p) => !g.eliminated?.[p.uid]).map((p) => p.uid))
+})
+
+function onSeatClick(p) {
+  if (!pendingSwapCard.value || !swapCandidateUids.value.has(p.uid)) return
+  onChooseSwapTarget(p.uid)
+}
 
 async function onChooseColor(color) {
   unlockAudio()
@@ -245,14 +315,29 @@ async function onChooseColor(color) {
     }
     return
   }
+  if (myRouletteChoice.value) {
+    try {
+      await roomStore.chooseRouletteColor(uid.value, color)
+    } catch (e) {
+      flashError(e)
+    }
+    return
+  }
   const card = pendingWildCard.value
   pendingWildCard.value = null
   await submitPlay(card.id, color)
 }
 
-async function submitPlay(cardId, color) {
+async function onChooseSwapTarget(targetUid) {
+  unlockAudio()
+  const card = pendingSwapCard.value
+  pendingSwapCard.value = null
+  await submitPlay(card.id, null, targetUid)
+}
+
+async function submitPlay(cardId, color, swapTargetUid) {
   try {
-    await roomStore.playCard(uid.value, cardId, color)
+    await roomStore.playCard(uid.value, cardId, color, swapTargetUid)
   } catch (e) {
     flashError(e)
   }
@@ -260,7 +345,12 @@ async function submitPlay(cardId, color) {
 
 async function onDrawPile() {
   unlockAudio()
-  if (!myTurn.value || awaitingMyDrawDecision.value || game.value.pendingColorChoice || turnPauseActive.value) return
+  const g = game.value
+  if (isNoMercy.value) {
+    if (!myTurn.value || g.pendingDrawnChoice || g.pendingRoulette || turnPauseActive.value) return
+  } else {
+    if (!myTurn.value || awaitingMyDrawDecision.value || g.pendingColorChoice || turnPauseActive.value) return
+  }
   try {
     await roomStore.drawCard(uid.value)
   } catch (e) {
@@ -276,13 +366,17 @@ async function onPass() {
   }
 }
 
-// Strict rule: only callable in the exact moment you're about to play your
-// second-to-last card — on your turn, holding exactly 2, with a legal play.
+// Classic: strict rule, only callable in the exact moment you're about to
+// play your second-to-last card — on your turn, holding exactly 2, with a
+// legal play. No Mercy: looser official rule — call any time you're sitting
+// on exactly 1 card, not gated on whose turn it is.
 const showUnoButton = computed(() => {
-  if (game.value.unoCalled[uid.value]) return false
+  const g = game.value
+  if (g.unoCalled[uid.value]) return false
+  if (isNoMercy.value) return myHand.value.length === 1
   if (myHand.value.length !== 2) return false
   if (!myTurn.value) return false
-  return myHand.value.some((c) => engine.isPlayableNow(c, game.value))
+  return myHand.value.some((c) => activeEngine.value.isPlayableNow(c, g))
 })
 async function onCallUno() {
   unlockAudio()
@@ -461,7 +555,21 @@ let lastSeenTurnFor = null
 let wasStackPenaltyDraw = false
 let lastSeenColor = game.value?.currentColor ?? null
 
-const PLAY_TYPES = new Set(['play', 'skip', 'reverse', 'stack-draw2', 'stack-wild4', 'wild'])
+const PLAY_TYPES = new Set([
+  'play',
+  'skip',
+  'reverse',
+  'stack-draw2',
+  'stack-wild4',
+  'wild',
+  // No Mercy lastAction types that also put the played card on the discard pile.
+  'discardAll',
+  'skipEveryone',
+  'stack',
+  'swap7',
+  'pass0',
+  'roulette-pending',
+])
 const SFX_GAP_MS = 250
 
 // Plays queued sfx one at a time: each one is awaited until it actually
@@ -505,10 +613,14 @@ watch(
 
     switch (la?.type) {
       case 'play':
+      case 'discardAll':
+      case 'pass0':
+      case 'swap7':
         enqueue(() => sfx.cardPlay())
         break
       case 'skip':
       case 'starter-skip':
+      case 'skipEveryone':
         enqueue(() => sfx.skip())
         break
       case 'reverse':
@@ -516,6 +628,7 @@ watch(
         enqueue(() => sfx.reverse())
         break
       case 'stack-draw2':
+      case 'stack':
         enqueue(() => sfx.stack())
         break
       case 'stack-wild4':
@@ -524,7 +637,11 @@ watch(
         // effects firing for the same card.
         break
       case 'wild':
+      case 'roulette-pending':
         enqueue(() => sfx.wild())
+        break
+      case 'roulette-resolved':
+        enqueue(() => sfx.drawStack())
         break
       case 'uno-call':
         enqueue(() => sfx.unoCall())
@@ -555,6 +672,11 @@ watch(
 
     if (la?.card && PLAY_TYPES.has(la.type) && discardPileEl.value) {
       spawnFly(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.card)
+    }
+    // Discard All dumps every matching-color card from the hand at once —
+    // animate every one of them flying out, not just the card that was played.
+    if (la?.type === 'discardAll' && la.dumpedCards?.length && discardPileEl.value) {
+      spawnFlyBatch(endpointFor(la.by), { el: discardPileEl.value, size: PILE_CARD_PX, alignLeft: false }, la.dumpedCards)
     }
     if (g.lastDraw && drawPileEl.value) {
       const from = { el: drawPileEl.value, size: PILE_CARD_PX, alignLeft: false }
@@ -632,6 +754,19 @@ function clearAfk() {
 }
 
 function pickRandomAutoAction(g, actUid) {
+  if (g.mode === 'no-mercy') {
+    if (g.pendingRoulette === actUid) {
+      return { kind: 'roulette', color: COLORS[Math.floor(Math.random() * COLORS.length)] }
+    }
+    if (g.pendingDrawnChoice?.uid === actUid) {
+      const card = g.hands[actUid].find((c) => c.id === g.pendingDrawnChoice.cardId)
+      return { kind: 'play', card }
+    }
+    const hand = g.hands[actUid] || []
+    const legal = hand.filter((c) => activeEngine.value.isPlayableNow(c, g))
+    if (legal.length === 0) return { kind: 'draw' }
+    return { kind: 'play', card: legal[Math.floor(Math.random() * legal.length)] }
+  }
   if (g.pendingColorChoice === actUid) {
     return { kind: 'color', color: COLORS[Math.floor(Math.random() * COLORS.length)] }
   }
@@ -639,11 +774,11 @@ function pickRandomAutoAction(g, actUid) {
     const hand = g.hands[actUid]
     const drawn = hand[hand.length - 1]
     const options = [{ kind: 'pass' }]
-    if (drawn && engine.isPlayableNow(drawn, g)) options.push({ kind: 'play', card: drawn })
+    if (drawn && activeEngine.value.isPlayableNow(drawn, g)) options.push({ kind: 'play', card: drawn })
     return options[Math.floor(Math.random() * options.length)]
   }
   const hand = g.hands[actUid] || []
-  const options = hand.filter((c) => engine.isPlayableNow(c, g)).map((c) => ({ kind: 'play', card: c }))
+  const options = hand.filter((c) => activeEngine.value.isPlayableNow(c, g)).map((c) => ({ kind: 'play', card: c }))
   options.push({ kind: 'draw' })
   return options[Math.floor(Math.random() * options.length)]
 }
@@ -653,8 +788,12 @@ async function autoDrawUntilResolved(actUid) {
     await roomStore.drawCard(actUid)
     const g = game.value
     if (!g) return
-    if (g.awaitingDrawDecision === actUid) return
-    if (engine.actionableUid(g) !== actUid) return
+    if (g.mode === 'no-mercy') {
+      if (g.pendingDrawnChoice?.uid === actUid) return
+    } else if (g.awaitingDrawDecision === actUid) {
+      return
+    }
+    if (activeEngine.value.actionableUid(g) !== actUid) return
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
 }
@@ -665,14 +804,22 @@ async function performAutoAction(actUid) {
   const action = pickRandomAutoAction(g, actUid)
   try {
     if (action.kind === 'color') await roomStore.chooseStarterColor(actUid, action.color)
+    else if (action.kind === 'roulette') await roomStore.chooseRouletteColor(actUid, action.color)
     else if (action.kind === 'pass') await roomStore.passTurn(actUid)
     else if (action.kind === 'draw') await autoDrawUntilResolved(actUid)
     else if (action.kind === 'play') {
-      const color =
-        action.card.type === 'wild' || action.card.type === 'wild4'
-          ? COLORS[Math.floor(Math.random() * COLORS.length)]
-          : null
-      await roomStore.playCard(actUid, action.card.id, color)
+      // No Mercy's wild cards need no color choice at all — only classic's do.
+      const isWild = g.mode !== 'no-mercy' && (action.card.type === 'wild' || action.card.type === 'wild4')
+      const isSwap7 = g.mode === 'no-mercy' && action.card.type === 'number' && action.card.value === 7
+      const color = isWild ? COLORS[Math.floor(Math.random() * COLORS.length)] : null
+      let swapTarget = null
+      if (isSwap7) {
+        const candidates = (activeEngine.value.activePlayers ? activeEngine.value.activePlayers(g) : g.playerOrder).filter(
+          (u) => u !== actUid,
+        )
+        swapTarget = candidates[Math.floor(Math.random() * candidates.length)]
+      }
+      await roomStore.playCard(actUid, action.card.id, color, swapTarget)
     }
     sfx.autoPlay()
   } catch {
@@ -697,7 +844,7 @@ watch(
     afkTimeout = setTimeout(() => {
       clearAfk()
       const cur = game.value
-      if (cur && cur.updatedAt === startedAt && engine.actionableUid(cur) === target) {
+      if (cur && cur.updatedAt === startedAt && activeEngine.value.actionableUid(cur) === target) {
         performAutoAction(target)
       }
     }, totalMs)
@@ -717,7 +864,7 @@ watch(
     const g = game.value
     if (!g || !pendingDraw.value || actionable.value !== uid.value || turnPauseActive.value) return
     const hand = g.hands[uid.value] || []
-    const canStack = hand.some((c) => engine.isPlayableNow(c, g))
+    const canStack = hand.some((c) => activeEngine.value.isPlayableNow(c, g))
     if (canStack) return
     if (autoStackDrawFor === uid.value) return
     autoStackDrawFor = uid.value
@@ -750,7 +897,10 @@ onBeforeUnmount(() => {
 
   <div class="mx-auto flex min-h-screen max-w-5xl flex-col px-3 py-4">
     <div class="mb-2 flex items-center justify-between text-xs text-slate-500">
-      <span>Room <span class="font-semibold text-slate-300">{{ room.code }}</span></span>
+      <span>
+        Room <span class="font-semibold text-slate-300">{{ room.code }}</span>
+        <span v-if="isNoMercy" class="ml-2 rounded-full bg-uno-red/20 px-2 py-0.5 text-[10px] font-bold text-uno-red">NO MERCY</span>
+      </span>
       <div class="flex items-center gap-2">
         <button
           type="button"
@@ -774,10 +924,17 @@ onBeforeUnmount(() => {
       <div
         v-for="p in opponentSeats"
         :key="p.uid"
-        class="absolute -translate-x-1/2 -translate-y-1/2"
+        class="absolute -translate-x-1/2 -translate-y-1/2 transition-transform"
+        :class="swapCandidateUids.has(p.uid) ? 'cursor-pointer hover:scale-110' : ''"
         :style="p.style"
         :ref="(el) => setSeatRef(p.uid, el)"
+        @click="onSeatClick(p)"
       >
+        <div
+          v-if="swapCandidateUids.has(p.uid)"
+          class="pointer-events-none absolute -inset-4 -z-10 animate-pulse rounded-full ring-4 ring-uno-yellow"
+          aria-hidden="true"
+        ></div>
         <PlayerBadge
           :name="p.name"
           :cards="p.cards"
@@ -786,6 +943,7 @@ onBeforeUnmount(() => {
           :vulnerable="p.vulnerable"
           :can-catch="p.vulnerable"
           :waiting-on="p.waitingOn"
+          :eliminated="p.eliminated"
           @catch="onCatch(p.uid)"
         />
       </div>
@@ -950,7 +1108,7 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
-    <ColorPickerModal :show="!!pendingWildCard || startingColorChoiceIsMine" @choose="onChooseColor" />
+    <ColorPickerModal :show="!!pendingWildCard || startingColorChoiceIsMine || myRouletteChoice" @choose="onChooseColor" />
 
     <RoundSummaryModal
       v-if="game.status === 'round-over' || game.status === 'game-over'"

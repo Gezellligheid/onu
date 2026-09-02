@@ -96,6 +96,7 @@ export function createRound(players, { targetScore = DEFAULT_TARGET_SCORE, score
   for (const uid of playerOrder) nextScores[uid] = scores[uid] ?? 0
 
   const state = {
+    mode: 'classic',
     status: 'playing',
     players,
     playerOrder,

@@ -24,6 +24,5 @@ export const WILD_DRAW_FOUR_PENALTY = 4
 export const NO_UNO_CALL_PENALTY = 2
 export const STARTING_HAND_SIZE = 7
 export const MIN_PLAYERS = 2
-export const MAX_PLAYERS = 10
 
 export const DEFAULT_TARGET_SCORE = 500

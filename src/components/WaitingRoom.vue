@@ -18,6 +18,12 @@ const canStart = computed(() => props.room.players.length >= MIN_PLAYERS)
       <p class="text-sm uppercase tracking-widest text-slate-500">Invite code</p>
       <p class="mt-1 font-display text-5xl font-extrabold tracking-[0.25em] text-uno-yellow">{{ room.code }}</p>
       <p class="mt-2 text-sm text-slate-400">Share this code — friends can join from the home screen.</p>
+      <span
+        class="mt-3 inline-block rounded-full px-3 py-1 text-xs font-bold"
+        :class="room.mode === 'no-mercy' ? 'bg-uno-red/20 text-uno-red' : 'bg-uno-yellow/20 text-uno-yellow'"
+      >
+        {{ room.mode === 'no-mercy' ? 'UNO No Mercy' : 'Classic' }}
+      </span>
     </div>
 
     <div class="rounded-2xl border border-white/10 bg-white/5 p-5">

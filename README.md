@@ -10,7 +10,8 @@ Real-time multiplayer UNO for you and your friends — built with Vue 3, Tailwin
 - **Round table layout** — opponents are seated in an arc around the discard/draw piles, like sitting around a real table, with their hands shown as fanned card backs (so you always see at a glance how many cards everyone's holding).
 - **Real card artwork**, animated dealing/playing/drawing, and synthesized sound effects (see [Look & feel](#look--feel)).
 - **Clear turn & playable-card cues** — the active player glows, your playable cards get a pulsing highlight, and the draw pile tells you when you must draw.
-- **House rules**: stacking +2/+4 cards, draw-until-playable, an unlimited draw pile, and a 10-second AFK auto-play (see [Rules implemented](#rules-implemented)).
+- **House rules**: stacking +2/+4 cards, draw-until-playable, an unlimited draw pile, and a 10-second AFK auto-play (see [Rules implemented](#rules-implemented--classic-mode)).
+- **Two game modes** — Classic UNO, or [UNO No Mercy](#game-modes) (Mattel's 2023 elimination variant), chosen by the host at room creation.
 - **Classic UNO scoring** — first to 200/300/500 points wins the match (see [Scoring](#scoring--pointing-system)).
 
 ## Tech stack
@@ -70,7 +71,14 @@ This is designed for casual games among friends, not tournament-grade anti-cheat
 - **Hands are open by design** — every player's actual cards are shown to everyone (fanned card backs became fanned card *faces*), not just counts. This is a deliberate casual/couch-co-op mode, not a bug: it turns the shared game document's inherent lack of secrecy (see below) into a feature instead of a leak.
 - All game state, including every hand, lives in one shared Firestore document that all players read — there's no server-side concept of "this hand belongs to this player" enforced by the backend, only by the UI. If you want genuinely hidden hands later, that requires moving the authoritative game logic into a Cloud Function or another server component that keeps each player's hand in a doc only they can read. The `src/lib/uno/engine.js` module is a pure, framework-free rules engine, so it could be dropped into a Cloud Function largely as-is if you want to go that route.
 
-## Rules implemented
+## Game modes
+
+The host picks a mode when creating a room; it's fixed for that room's lifetime.
+
+- **Classic** — standard UNO plus the house rules below.
+- **UNO No Mercy** — a from-scratch implementation of Mattel's [UNO Show 'Em No Mercy](https://service.mattel.com/instruction_sheets/HVW18-Eng.pdf) (2023), a genuinely different 168-card game: value-tiered Draw stacking (+2/+4/+6/+10, any Draw card of equal-or-higher value can stack, not just matching types), **Discard All** and **Skip Everyone** action cards, a **7's Swap** (forces a full hand swap with a player of your choice — click their seat at the table to pick who) and **0's Pass** (everyone's hand passes to the next player), **Wild Color Roulette** (the next player picks a color, then reveals cards from the draw pile until they hit it), and the **Mercy rule**: reach 25 cards in hand and you're knocked out for the rest of the round (your cards re-enter the deck on the next reshuffle), with the last player standing winning outright. None of its four wild cards (Reverse Draw 4, Draw 6, Draw 10, Color Roulette) have a "choose a color" step — that's a classic-only mechanic, and there's no plain "Wild" card in this deck at all. Scoring adds a 250-point bonus per knockout. Card faces are original CSS/SVG art (see [Look & feel](#look--feel)) rather than downloaded product images. Implementation lives in `src/lib/no-mercy/` as a fully parallel rules engine — see [Project structure](#project-structure).
+
+## Rules implemented — Classic mode
 
 Based on the [official rules](https://www.unorules.com/), plus a few common house rules called out below:
 
@@ -91,7 +99,7 @@ Based on the [official rules](https://www.unorules.com/), plus a few common hous
 
 ## Look & feel
 
-- **Card artwork** lives in `public/cards/` (`{color}-{value|skip|reverse|draw2}.jpg`, plus `wild.jpg` / `wild-draw4.jpg`) and is rendered by [`PlayingCard.vue`](src/components/PlayingCard.vue); the face-down back is drawn with CSS so no back-of-card image is needed.
+- **Card artwork** — classic mode uses real photographed card faces in `public/cards/` (`{color}-{value|skip|reverse|draw2}.jpg`, plus `wild.jpg` / `wild-draw4.jpg`); No Mercy mode has no downloadable real-product images to use, so its cards are drawn as original CSS/SVG faces (jagged corner accents, per-type icon/label) instead. Both are rendered by [`PlayingCard.vue`](src/components/PlayingCard.vue), keyed off each card's `nm` flag; the face-down back is drawn with CSS so no back-of-card image is needed either way.
 - **Animations** — cards visibly fly from a player's hand to the discard pile when played, and from the draw pile to whoever's drawing (each one its own flight, matching the click-per-card draw rule above); the discard pile flips when the top card changes, the draw pile pops on every draw, playable cards get a soft pulsing ring (a red pulsing ring instead when you must respond to a +2/+4 stack), and an invalid action shakes your hand.
 - **Seats are fixed, like a real table** — opponents sit in a permanent arc in turn order with "you" at the near edge, so walking around the arc *is* the play order. A big circular arrow behind the piles (mirrored when Reverse flips the direction) shows which way play currently flows, colored to match the current color.
 - **Sound effects** are synthesized at runtime with the Web Audio API (see [`src/lib/sound.js`](src/lib/sound.js)) — no downloaded assets, no licensing/attribution questions, fully offline-capable. The exceptions are recorded clips (user-supplied, not sourced by this app) layered on top of their synthesized accents:
@@ -110,7 +118,7 @@ Based on the [official rules](https://www.unorules.com/), plus a few common hous
 
 ## Scoring / pointing system
 
-Standard UNO scoring, applied at the end of every round:
+Standard UNO scoring (classic mode), applied at the end of every round:
 
 | Card | Points |
 |---|---|
@@ -119,18 +127,21 @@ Standard UNO scoring, applied at the end of every round:
 | Wild | 40 |
 | Wild Draw Four | 50 |
 
-When a player goes out, they're awarded the **sum of every other player's remaining hand**, added to their running total. The match continues, round after round, until someone's cumulative score reaches the target (**200, 300, or 500** — chosen by the host when creating the room), at which point they win the game and a final scoreboard is shown.
+When a player goes out, they're awarded the **sum of every other player's remaining hand**, added to their running total. The match continues, round after round, until someone's cumulative score reaches the target (**200, 300, or 500** for classic; **500, 1000, or 1500** for No Mercy, whose knockout bonuses run much higher — see [Game modes](#game-modes)), at which point they win the game and a final scoreboard is shown.
 
 ## Project structure
 
 ```
 src/
-  lib/uno/         pure game engine: deck, rules, stacking, scoring (no Vue/Firebase deps)
+  lib/uno/          classic game engine: deck, rules, stacking, scoring (no Vue/Firebase deps)
+  lib/no-mercy/      UNO No Mercy game engine — same shape as lib/uno/, fully parallel rules
+  lib/uno/shared.js  the two genuinely mode-agnostic helpers (shuffle, clone) both engines use
+  lib/uno/modes.js   { classic, 'no-mercy' } registry — getEngine(mode) picks the right one
   lib/room.js       Firestore read/write layer (rooms, transactions, actions)
   lib/sound.js      synthesized Web Audio SFX engine
   firebase.js       Firebase app/auth/firestore init
   stores/           Pinia stores (auth, room)
   components/       PlayingCard, CardFan, PlayerBadge, GameBoard, modals, WaitingRoom
   views/            HomeView (create/join), RoomView (lobby ⇄ game switch)
-public/cards/       UNO card face artwork (see "Look & feel" above)
+public/cards/       classic mode's UNO card face artwork (see "Look & feel" above)
 ```
