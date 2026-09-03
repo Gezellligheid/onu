@@ -23,8 +23,9 @@ export function isPlayable(card, top, currentColor) {
 
 /**
  * House rule: stacking. While a +2/+4 chain is pending, the only legal
- * plays are cards of that same stack type (any color), a Skip (blocks the
- * whole stack away — nobody draws), or a Reverse (redirects the whole
+ * plays are cards of that same stack type (any color), a Skip (passes the
+ * whole stack one seat further along — the skipped player is spared, but
+ * whoever it lands on next inherits it), or a Reverse (redirects the whole
  * stack back to whoever played it) — everything else, including the
  * color/number matching rules above, is suspended until the stack is
  * resolved one of those ways or drawn.
@@ -210,11 +211,11 @@ export function playCard(state, uid, cardId, chosenColor) {
   const respondingToStack = !!next.pendingDraw
   if (respondingToStack) {
     const canStack = card.type === next.pendingDraw.type
-    const canBlock = card.type === 'skip'
+    const canSkipForward = card.type === 'skip'
     const canRedirect = card.type === 'reverse'
-    if (!canStack && !canBlock && !canRedirect) {
+    if (!canStack && !canSkipForward && !canRedirect) {
       const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
-      throw new Error(`You must stack another ${label}, block with Skip, redirect with Reverse, or draw ${next.pendingDraw.count} cards.`)
+      throw new Error(`You must stack another ${label}, skip it forward, redirect with Reverse, or draw ${next.pendingDraw.count} cards.`)
     }
   } else if (!isPlayable(card, topCard(next), next.currentColor)) {
     throw new Error('Card does not match color, number, or type.')
@@ -253,14 +254,16 @@ export function playCard(state, uid, cardId, chosenColor) {
     const blocked = next.playerOrder[(next.currentIndex + next.direction + n * 10) % n]
     stepIndex(next, 2)
     if (respondingToStack) {
+      // The stack itself isn't touched — it passes straight through to
+      // whoever the skip lands on, same as the person who just played it
+      // was on the hook a moment ago.
       const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
-      next.pendingDraw = null
       next.lastAction = {
-        type: 'block-skip',
+        type: 'skip-stack',
         by: uid,
         target: blocked,
         card,
-        message: `${nameFor(next, uid)} blocks the ${label} with Skip — ${nameFor(next, blocked)} is blocked!`,
+        message: `${nameFor(next, uid)} skips the ${label} past ${nameFor(next, blocked)} onto ${nameFor(next, currentPlayerId(next))}!`,
       }
     } else {
       next.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(next, blocked)} is blocked!` }

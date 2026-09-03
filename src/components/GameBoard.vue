@@ -191,6 +191,22 @@ function clearHandHover() {
   hoverCardIndex.value = null
 }
 
+// Touch has no hover — sliding a finger across the (densely packed, mostly
+// offscreen-on-mobile) hand drives the exact same ripple, via whatever card
+// element is actually under the touch point. Only wired to touchmove (not
+// touchstart): calling preventDefault there would suppress the synthetic
+// click a plain tap relies on, breaking tap-to-play. touch-action: none on
+// the container (template) stops the slide from also scrolling the page,
+// without touching click semantics.
+function onHandTouchMove(e) {
+  const touch = e.touches[0]
+  if (!touch) return
+  const el = document.elementFromPoint(touch.clientX, touch.clientY)
+  const cardEl = el?.closest('[data-arc-idx]')
+  if (!cardEl) return
+  onCardHoverEnter(Number(cardEl.dataset.arcIdx), Number(cardEl.dataset.cardIdx))
+}
+
 function handCardStyle(arcIdx, i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
@@ -261,7 +277,7 @@ const turnBannerText = computed(() => {
     if (g.pendingDraw) {
       const target = g.playerOrder[g.currentIndex]
       return target === uid.value
-        ? `Stack ${g.pendingDraw.lastValue}+, block, redirect, or draw ${g.pendingDraw.total}!`
+        ? `Stack ${g.pendingDraw.lastValue}+, skip it forward, redirect, or draw ${g.pendingDraw.total}!`
         : `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
     }
     const cur = g.playerOrder[g.currentIndex]
@@ -273,7 +289,7 @@ const turnBannerText = computed(() => {
   if (g.pendingDraw) {
     const target = g.awaitingDrawDecision ? g.awaitingDrawDecision : g.playerOrder[g.currentIndex]
     return target === uid.value
-      ? `Stack, block with Skip, redirect with Reverse, or draw ${g.pendingDraw.count}!`
+      ? `Stack, skip it forward, redirect with Reverse, or draw ${g.pendingDraw.count}!`
       : `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
   }
   if (g.awaitingDrawDecision) {
@@ -1238,7 +1254,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="flex items-center gap-3">
+      <div class="relative flex items-center gap-3">
+        <!-- UNO call button: sits just left of the piles on desktop; on
+        landscape-mobile it switches to a fixed left-edge placement instead,
+        always reachable one-handed regardless of hand scroll/fan position. -->
+        <button
+          v-if="showUnoButton"
+          type="button"
+          class="animate-pulse-glow rounded-full bg-uno-red px-6 py-3 text-lg font-extrabold text-white shadow-lg"
+          :class="
+            isLandscapeMobile
+              ? 'pointer-events-auto fixed left-3 top-1/2 z-40 -translate-y-1/2'
+              : 'absolute right-full top-1/2 z-10 mr-4 -translate-y-1/2'
+          "
+          @click="onCallUno"
+        >
+          UNO!
+        </button>
+
         <button type="button" class="flex flex-col items-center gap-1" ref="drawPileEl" @click="onDrawPile">
           <PlayingCard
             :card="null"
@@ -1297,17 +1330,6 @@ onBeforeUnmount(() => {
       {{ game.lastAction.message }}
     </p>
 
-    <!-- UNO call button: fixed to the left-center edge — always reachable
-    one-handed regardless of hand scroll/fan position. -->
-    <button
-      v-if="showUnoButton"
-      type="button"
-      class="pointer-events-auto fixed left-3 top-1/2 z-40 -translate-y-1/2 animate-pulse-glow rounded-full bg-uno-red px-6 py-3 text-lg font-extrabold text-white shadow-lg"
-      @click="onCallUno"
-    >
-      UNO!
-    </button>
-
     <!-- Spacer so page content isn't hidden behind the floating hand's
     VISIBLE portion — the part deliberately pushed offscreen (see
     handOffscreenPx) doesn't need protecting, or this squeezes the flex-1
@@ -1334,9 +1356,16 @@ onBeforeUnmount(() => {
       -->
       <div
         class="pointer-events-auto flex flex-col items-center"
-        :style="{ gap: `${HAND_ARC_GAP}px`, transform: `translateY(${handOffscreenPx}px)` }"
+        :style="{
+          gap: `${HAND_ARC_GAP}px`,
+          transform: `translateY(${handOffscreenPx}px)`,
+          touchAction: 'none',
+        }"
         ref="myHandEl"
         @mouseleave="clearHandHover"
+        @touchmove="onHandTouchMove"
+        @touchend="clearHandHover"
+        @touchcancel="clearHandHover"
       >
         <div
           v-for="(arc, arcIdx) in handArcs"
@@ -1349,6 +1378,8 @@ onBeforeUnmount(() => {
             :key="card.id"
             class="absolute left-1/2 top-4 origin-bottom transition-transform duration-150"
             :style="handCardStyle(arcIdx, idx, arc.length)"
+            :data-arc-idx="arcIdx"
+            :data-card-idx="idx"
             @mouseenter="onCardHoverEnter(arcIdx, idx)"
             @mouseleave="onCardHoverLeave(arcIdx, idx)"
           >
