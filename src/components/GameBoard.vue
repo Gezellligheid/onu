@@ -1137,7 +1137,11 @@ onBeforeUnmount(() => {
     <p class="max-w-xs text-sm text-slate-400">UNO Online plays best in landscape — turn your phone sideways to fit everyone at once.</p>
   </div>
 
-  <div v-else class="mx-auto flex h-screen max-w-5xl flex-col overflow-y-hidden px-3 py-4">
+  <div
+    v-else
+    class="mx-auto flex max-w-5xl flex-col px-3 py-4"
+    :class="isLandscapeMobile ? 'h-screen overflow-y-hidden' : 'min-h-screen'"
+  >
     <div class="mb-2 flex items-center justify-between text-xs text-slate-500">
       <span>
         Room <span class="font-semibold text-slate-300">{{ room.code }}</span>
