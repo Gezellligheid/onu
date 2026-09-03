@@ -2,14 +2,17 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
   collection,
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
-import { getEngine } from './uno/modes.js'
-import { DEFAULT_TARGET_SCORE, MIN_PLAYERS } from './uno/constants.js'
+import { DEFAULT_TARGET_SCORE } from './uno/constants.js'
+import { HostSession } from './p2p/hostSession.js'
+import { PeerSession } from './p2p/peerSession.js'
+import { clearSignal } from './p2p/signaling.js'
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I to avoid ambiguity
 
@@ -97,6 +100,7 @@ export async function leaveRoom({ code, uid }) {
     if (room.hostUid === uid) patch.hostUid = players[0].uid
     tx.update(ref, patch)
   })
+  clearSignal(code.toUpperCase(), uid)
 }
 
 export function subscribeRoom(code, callback, onError) {
@@ -108,92 +112,94 @@ export function subscribeRoom(code, callback, onError) {
   )
 }
 
-export async function startGame({ code, hostUid }) {
+// ---- P2P session lifecycle ----
+// Lobby metadata (above) stays on Firestore; the live game itself flows
+// entirely over a WebRTC data channel once a session is connected. See
+// src/lib/p2p/{hostSession,peerSession}.js for the transport.
+
+let session = null
+
+export function connectSession({ code, uid, isHost, onGameState, onConnectionStatus }) {
   requireDb()
-  const ref = roomRef(code)
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref)
-    if (!snap.exists()) throw new Error('Room not found.')
-    const room = snap.data()
-    if (room.hostUid !== hostUid) throw new Error('Only the host can start the game.')
-    if (room.players.length < MIN_PLAYERS) throw new Error(`Need at least ${MIN_PLAYERS} players.`)
-    const engine = getEngine(room.mode)
-    const game = engine.createRound(room.players, {
-      targetScore: room.targetScore,
-      mercyLimit: room.mercyLimit,
-      jumpInEnabled: room.jumpInEnabled,
+  disconnectSession()
+  if (isHost) {
+    // The live `game` never touches Firestore, but `status` is lobby
+    // metadata (it gates joinRoom's "already started" check and lets a
+    // fresh subscriber see the right phase before the P2P layer catches
+    // up), so the host mirrors just that one field on each phase change —
+    // not on every move, since status stays 'playing' for the whole round.
+    let lastMirroredStatus = null
+    session = new HostSession({
+      code,
+      hostUid: uid,
+      onStateChange: (status, game) => {
+        onGameState(status, game)
+        if (status !== lastMirroredStatus) {
+          lastMirroredStatus = status
+          updateDoc(roomRef(code), { status }).catch(() => {})
+        }
+      },
     })
-    tx.update(ref, { status: 'playing', game })
-  })
+    onConnectionStatus('connected')
+  } else {
+    session = new PeerSession({ code, uid, onStateChange: onGameState, onConnectionStatus })
+  }
 }
 
-async function mutateGame(code, mutator) {
-  requireDb()
-  const ref = roomRef(code)
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref)
-    if (!snap.exists()) throw new Error('Room not found.')
-    const room = snap.data()
-    if (!room.game) throw new Error('Game has not started.')
-    const engine = getEngine(room.game.mode)
-    const nextGame = mutator(engine, room.game)
-    const patch = { game: nextGame }
-    if (nextGame.status === 'game-over') patch.status = 'finished'
-    tx.update(ref, patch)
-  })
+export function disconnectSession() {
+  if (session) session.destroy()
+  session = null
+}
+
+export function syncSessionPeers(players) {
+  if (session instanceof HostSession) session.syncPeers(players)
+}
+
+export function syncSessionConfig(lobbyDoc) {
+  if (session instanceof HostSession) session.updateConfig(lobbyDoc)
+}
+
+function dispatch(action, args) {
+  if (!session) return Promise.reject(new Error('Not connected to the room.'))
+  return session.dispatch(action, args)
+}
+
+export async function startGame({ hostUid }) {
+  return dispatch('startGame', [hostUid])
 }
 
 export const playCard = (code, uid, cardId, chosenColor, swapTargetUid) =>
-  mutateGame(code, (engine, game) => engine.playCard(game, uid, cardId, chosenColor, swapTargetUid))
+  dispatch('playCard', [uid, cardId, chosenColor, swapTargetUid])
 
 // House rule: playing a card out of turn when it matches the top of the
 // discard pile exactly. Only meaningful when the room's jumpInEnabled flag
 // was on at round creation — the engine itself enforces that.
 export const jumpIn = (code, uid, cardId, chosenColor, swapTargetUid) =>
-  mutateGame(code, (engine, game) => engine.jumpIn(game, uid, cardId, chosenColor, swapTargetUid))
+  dispatch('jumpIn', [uid, cardId, chosenColor, swapTargetUid])
 
-export const drawCard = (code, uid) => mutateGame(code, (engine, game) => engine.drawCard(game, uid))
+export const drawCard = (code, uid) => dispatch('drawCard', [uid])
 
 // Classic-only: no "keep and pass" choice exists in No Mercy.
-export const passTurn = (code, uid) => mutateGame(code, (engine, game) => engine.passTurn(game, uid))
+export const passTurn = (code, uid) => dispatch('passTurn', [uid])
 
-export const callUno = (code, uid) => mutateGame(code, (engine, game) => engine.callUno(game, uid))
+export const callUno = (code, uid) => dispatch('callUno', [uid])
 
-export const catchUno = (code, catcherId, targetId) =>
-  mutateGame(code, (engine, game) => engine.catchUno(game, catcherId, targetId))
+export const catchUno = (code, catcherId, targetId) => dispatch('catchUno', [catcherId, targetId])
 
 // Classic-only: the No Mercy starter never lands on a Wild (it's reshuffled
 // away like every other action/wild starter), so there's no starting-color
 // choice to make in that mode.
-export const chooseStarterColor = (code, uid, color) =>
-  mutateGame(code, (engine, game) => engine.chooseStarterColor(game, uid, color))
+export const chooseStarterColor = (code, uid, color) => dispatch('chooseStarterColor', [uid, color])
 
 // No Mercy-only: resolving a pending Wild Color Roulette pick.
-export const chooseRouletteColor = (code, uid, color) =>
-  mutateGame(code, (engine, game) => engine.chooseRouletteColor(game, uid, color))
+export const chooseRouletteColor = (code, uid, color) => dispatch('chooseRouletteColor', [uid, color])
 
-export async function startNextRound(code) {
-  requireDb()
-  const ref = roomRef(code)
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref)
-    if (!snap.exists()) throw new Error('Room not found.')
-    const room = snap.data()
-    if (!room.game) throw new Error('Game has not started.')
-    const engine = getEngine(room.game.mode)
-    const nextGame = engine.startNextRound(room.game)
-    tx.update(ref, { status: 'playing', game: nextGame })
-  })
+export async function startNextRound() {
+  return dispatch('startNextRound', [])
 }
 
-export async function returnToLobby(code) {
-  requireDb()
-  const ref = roomRef(code)
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref)
-    if (!snap.exists()) return
-    tx.update(ref, { status: 'lobby', game: null })
-  })
+export async function returnToLobby() {
+  return dispatch('returnToLobby', [])
 }
 
 export function roomsCollectionRef() {

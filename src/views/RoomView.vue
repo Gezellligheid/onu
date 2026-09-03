@@ -17,6 +17,7 @@ const joining = ref(false)
 const joinError = ref('')
 
 const room = computed(() => roomStore.room)
+const connectionStatus = computed(() => roomStore.connectionStatus)
 const alreadyMember = computed(() => !!room.value && auth.uid && room.value.players.some((p) => p.uid === auth.uid))
 const needsName = computed(() => auth.ready && !alreadyMember.value)
 
@@ -78,6 +79,22 @@ async function onLeave() {
 
   <div v-else-if="!room" class="flex min-h-screen items-center justify-center text-slate-500">Loading room…</div>
 
+  <div
+    v-else-if="connectionStatus === 'host-disconnected' || connectionStatus === 'connect-failed'"
+    class="flex min-h-screen items-center justify-center px-4 text-center"
+  >
+    <div>
+      <p class="mb-4 text-slate-300">
+        {{
+          connectionStatus === 'host-disconnected'
+            ? "Lost connection to the host. They may have closed the game."
+            : "Couldn't establish a connection. Check your network and try rejoining."
+        }}
+      </p>
+      <router-link to="/" class="text-uno-blue underline">Back home</router-link>
+    </div>
+  </div>
+
   <div v-else-if="needsName" class="flex min-h-screen items-center justify-center px-4">
     <div class="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-6">
       <p class="mb-1 font-display text-lg font-bold text-slate-100">Join room {{ room.code }}</p>
@@ -101,6 +118,16 @@ async function onLeave() {
   </div>
 
   <WaitingRoom v-else-if="room.status === 'lobby'" :room="room" :uid="auth.uid" @start="onStart" @leave="onLeave" />
+
+  <!--
+    status can say 'playing' (mirrored to Firestore so joinRoom rejects
+    late joins) before the P2P layer has actually delivered a `game` —
+    notably right after a reload, before the resync broadcast arrives.
+    Never mount GameBoard against a null game.
+  -->
+  <div v-else-if="!room.game" class="flex min-h-screen items-center justify-center text-slate-500">
+    Reconnecting to the game…
+  </div>
 
   <GameBoard v-else />
 </template>
