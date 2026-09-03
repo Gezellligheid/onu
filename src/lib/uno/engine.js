@@ -23,12 +23,14 @@ export function isPlayable(card, top, currentColor) {
 
 /**
  * House rule: stacking. While a +2/+4 chain is pending, the only legal
- * plays are cards of that same stack type (any color) — everything else,
- * including the color/number matching rules above, is suspended until the
- * stack is resolved by someone drawing it.
+ * plays are cards of that same stack type (any color), a Skip (blocks the
+ * whole stack away — nobody draws), or a Reverse (redirects the whole
+ * stack back to whoever played it) — everything else, including the
+ * color/number matching rules above, is suspended until the stack is
+ * resolved one of those ways or drawn.
  */
 export function isPlayableNow(card, state) {
-  if (state.pendingDraw) return card.type === state.pendingDraw.type
+  if (state.pendingDraw) return card.type === state.pendingDraw.type || card.type === 'skip' || card.type === 'reverse'
   return isPlayable(card, topCard(state), state.currentColor)
 }
 
@@ -205,10 +207,14 @@ export function playCard(state, uid, cardId, chosenColor) {
   if (cardIdx === -1) throw new Error('Card not in hand.')
   const card = hand[cardIdx]
 
-  if (next.pendingDraw) {
-    if (card.type !== next.pendingDraw.type) {
+  const respondingToStack = !!next.pendingDraw
+  if (respondingToStack) {
+    const canStack = card.type === next.pendingDraw.type
+    const canBlock = card.type === 'skip'
+    const canRedirect = card.type === 'reverse'
+    if (!canStack && !canBlock && !canRedirect) {
       const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
-      throw new Error(`You must stack another ${label} or draw ${next.pendingDraw.count} cards.`)
+      throw new Error(`You must stack another ${label}, block with Skip, redirect with Reverse, or draw ${next.pendingDraw.count} cards.`)
     }
   } else if (!isPlayable(card, topCard(next), next.currentColor)) {
     throw new Error('Card does not match color, number, or type.')
@@ -246,11 +252,30 @@ export function playCard(state, uid, cardId, chosenColor) {
   } else if (card.type === 'skip') {
     const blocked = next.playerOrder[(next.currentIndex + next.direction + n * 10) % n]
     stepIndex(next, 2)
-    next.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(next, blocked)} is blocked!` }
+    if (respondingToStack) {
+      const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
+      next.pendingDraw = null
+      next.lastAction = {
+        type: 'block-skip',
+        by: uid,
+        target: blocked,
+        card,
+        message: `${nameFor(next, uid)} blocks the ${label} with Skip — ${nameFor(next, blocked)} is blocked!`,
+      }
+    } else {
+      next.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(next, blocked)} is blocked!` }
+    }
   } else if (card.type === 'reverse') {
-    next.direction *= -1
-    stepIndex(next, n === 2 ? 2 : 1)
-    next.lastAction = { type: 'reverse', by: uid, card, message: `${nameFor(next, uid)} played Reverse.` }
+    if (respondingToStack) {
+      const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
+      next.direction *= -1
+      stepIndex(next, 1) // lands exactly on whoever stacked it onto uid
+      next.lastAction = { type: 'redirect-reverse', by: uid, card, message: `${nameFor(next, uid)} redirects the ${label} back with Reverse!` }
+    } else {
+      next.direction *= -1
+      stepIndex(next, n === 2 ? 2 : 1)
+      next.lastAction = { type: 'reverse', by: uid, card, message: `${nameFor(next, uid)} played Reverse.` }
+    }
   } else if (card.type === 'draw2') {
     const stacked = !!next.pendingDraw
     next.pendingDraw = { type: 'draw2', count: (next.pendingDraw?.count ?? 0) + DRAW_TWO_PENALTY }

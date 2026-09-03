@@ -104,23 +104,36 @@ function isCardPlayable(card) {
 // want, without ever needing a scrollbar.
 const HAND_MAX_SPACING = 81
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
+const viewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 800)
 function onResize() {
   viewportWidth.value = window.innerWidth
+  viewportHeight.value = window.innerHeight
 }
 onMounted(() => window.addEventListener('resize', onResize))
 onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
+// A phone rotated to landscape is wide but short (typically well under
+// 500px tall) — plenty of width for "desktop-sized" cards but not enough
+// height for the desktop layout's proportions. Detected separately from
+// isMobileCardSize (which only looks at width) so landscape phones still
+// get compact sizing despite their generous width.
+const isLandscapeMobile = computed(() => viewportWidth.value > viewportHeight.value && viewportHeight.value < 520)
+// Narrow + portrait: the one case gameplay doesn't work well in. Nudges the
+// player to rotate rather than trying to cram the board into a tall sliver.
+const isNarrowPortrait = computed(() => viewportHeight.value >= viewportWidth.value && viewportWidth.value < 820)
+
 const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48))
 
-// The piles/direction-arrow box was a fixed 440x280 — fine on desktop, but
-// wider than an entire mobile screen. Scale it down to fit, same aspect
-// ratio throughout (the SVG's viewBox scales with it automatically).
-const pilesBoxWidth = computed(() => Math.min(440, handAvailableWidth.value))
-const pilesBoxHeight = computed(() => Math.round(pilesBoxWidth.value * (280 / 440)))
 // The hand box's fixed height only needs to fit the (mobile-shrunk) card
 // height plus its droop — 260px was tuned for the desktop xl card.
 const handBoxHeight = computed(() => (isMobileCardSize.value ? 200 : 260))
 const HAND_EDGE_PAD = 12
+
+// Landscape-mobile has so little vertical room that even compact cards are
+// worth partially sinking below the viewport edge — only the top portion
+// (numbers/symbols live in the corners) needs to stay visible to identify
+// and tap a card; hovering/tapping still lifts it via the ripple effect.
+const handOffscreenPx = computed(() => (isLandscapeMobile.value ? Math.round(handBoxHeight.value * 0.4) : 0))
 
 // Once a hand grows past HAND_ARC_SIZE cards (No Mercy's Mercy limit has no
 // cap, so this genuinely happens), it splits into multiple fans of up to
@@ -248,7 +261,7 @@ const turnBannerText = computed(() => {
     if (g.pendingDraw) {
       const target = g.playerOrder[g.currentIndex]
       return target === uid.value
-        ? `Stack a ${g.pendingDraw.lastValue}+ or draw ${g.pendingDraw.total}!`
+        ? `Stack ${g.pendingDraw.lastValue}+, block, redirect, or draw ${g.pendingDraw.total}!`
         : `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
     }
     const cur = g.playerOrder[g.currentIndex]
@@ -260,7 +273,7 @@ const turnBannerText = computed(() => {
   if (g.pendingDraw) {
     const target = g.awaitingDrawDecision ? g.awaitingDrawDecision : g.playerOrder[g.currentIndex]
     return target === uid.value
-      ? `Stack a matching +${g.pendingDraw.type === 'wild4' ? '4' : '2'} or draw ${g.pendingDraw.count}!`
+      ? `Stack, block with Skip, redirect with Reverse, or draw ${g.pendingDraw.count}!`
       : `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
   }
   if (g.awaitingDrawDecision) {
@@ -301,26 +314,28 @@ function playerInfo(id) {
   }
 }
 
-// Seats are FIXED around the table in turn order, "me" at the near/bottom
-// edge — exactly like sitting around a real table. Going around the arc in
-// seat order traces the play order; the direction arrow (below) shows which
-// way that currently flows, since Reverse flips the direction, not the seats.
+// On a small/short screen there isn't room to keep every opponent's seat
+// visible and legible at once, especially with several players — so mobile
+// layouts only show a window of up to 3, centered on whoever the game
+// currently needs an action from, and re-centers as that changes. Desktop
+// shows everyone since it has the room for it. While choosing a 7-swap
+// target, the window is bypassed entirely — every candidate needs to be
+// clickable, not just the 3 currently in view.
+const isMobileLayout = computed(() => isMobileCardSize.value || isLandscapeMobile.value)
+const hiddenOpponentCount = computed(() =>
+  isMobileLayout.value && !pendingSwapCard.value ? Math.max(0, opponents.value.length - 3) : 0,
+)
+
+// A simple row, left-to-right in turn order — the direction indicator next
+// to the piles (below) is what shows which way that currently flows, since
+// Reverse flips the direction, not the seats.
 const opponentSeats = computed(() => {
   const list = opponents.value
+  if (!isMobileLayout.value || list.length <= 3 || pendingSwapCard.value) return list
   const n = list.length
-  if (n === 0) return []
-  const spread = n === 1 ? 0 : Math.min(150, 34 * (n - 1))
-  const start = 270 - spread / 2
-  const step = n === 1 ? 0 : spread / (n - 1)
-  const rx = 44
-  const ry = 40
-  return list.map((p, i) => {
-    const angleDeg = start + step * i
-    const rad = (angleDeg * Math.PI) / 180
-    const left = 50 + rx * Math.cos(rad)
-    const top50 = 50 + ry * Math.sin(rad)
-    return { ...p, style: { left: `${left}%`, top: `${top50}%` } }
-  })
+  let centerIdx = list.findIndex((p) => p.uid === actionable.value)
+  if (centerIdx === -1) centerIdx = 0
+  return [list[(centerIdx - 1 + n) % n], list[centerIdx], list[(centerIdx + 1) % n]]
 })
 
 // ---- Decorative circular direction arrow around the piles ----
@@ -353,12 +368,13 @@ function arrowHeadPoints(cx, cy, rx, ry, endDeg, size = 13) {
   const b2y = ey - ny * size * 0.55
   return `${tipX},${tipY} ${b1x},${b1y} ${b2x},${b2y}`
 }
-const DIR_CX = 220
-const DIR_CY = 140
-const DIR_RX = 206
-const DIR_RY = 129
+// Small badge-sized icon next to the piles — not a big background element.
+const DIR_CX = 30
+const DIR_CY = 20
+const DIR_RX = 24
+const DIR_RY = 15
 const directionArcPath = ellipseArcPath(DIR_CX, DIR_CY, DIR_RX, DIR_RY, -35, 250)
-const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 38)
+const directionArrowPoints = arrowHeadPoints(DIR_CX, DIR_CY, DIR_RX, DIR_RY, 250, 6)
 
 // House rule: Jump-In — a card matching the discard pile's top card EXACTLY
 // (color AND number/symbol) can be played out of turn, any time. Only
@@ -568,10 +584,12 @@ function setSeatRef(id, el) {
 // animation would balloon up to the width of the whole hand panel instead
 // of landing at normal card size.
 // PlayingCard's xl/lg sizes shrink below this same viewport width via a
-// `sm:` Tailwind breakpoint — these mirror that in JS so fly-animation
-// clones and fan-spacing math stay in sync with what's actually rendered.
+// `sm:` Tailwind breakpoint (bypassed in landscape-mobile via its `compact`
+// prop, driven by this same flag) — these mirror that in JS so
+// fly-animation clones and fan-spacing math stay in sync with what's
+// actually rendered.
 const MOBILE_CARD_BREAKPOINT = 640
-const isMobileCardSize = computed(() => viewportWidth.value < MOBILE_CARD_BREAKPOINT)
+const isMobileCardSize = computed(() => viewportWidth.value < MOBILE_CARD_BREAKPOINT || isLandscapeMobile.value)
 const HAND_CARD_PX = computed(() => (isMobileCardSize.value ? 96 : 134)) // matches PlayingCard size="xl"
 const SEAT_CARD_PX = 40 // matches CardFan's size="sm" (unchanged across breakpoints)
 const PILE_CARD_PX = computed(() => (isMobileCardSize.value ? 80 : 112)) // matches PlayingCard size="lg"
@@ -1111,7 +1129,15 @@ onBeforeUnmount(() => {
     aria-hidden="true"
   ></div>
 
-  <div class="mx-auto flex min-h-screen max-w-5xl flex-col px-3 py-4">
+  <!-- Rotate prompt: the board is designed to play in landscape on a phone —
+  narrow portrait doesn't have the width for the play area + hand at once. -->
+  <div v-if="isNarrowPortrait" class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-slate-950 px-6 text-center">
+    <div class="animate-rotate-hint text-6xl">📱</div>
+    <p class="font-display text-lg font-bold text-slate-100">Rotate your device</p>
+    <p class="max-w-xs text-sm text-slate-400">UNO Online plays best in landscape — turn your phone sideways to fit everyone at once.</p>
+  </div>
+
+  <div v-else class="mx-auto flex h-screen max-w-5xl flex-col overflow-y-hidden px-3 py-4">
     <div class="mb-2 flex items-center justify-between text-xs text-slate-500">
       <span>
         Room <span class="font-semibold text-slate-300">{{ room.code }}</span>
@@ -1131,20 +1157,19 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Round table. Taller aspect + extra top clearance on mobile: opponent
-    seats sit as high as ~10% from the table's own top edge, and their
-    fixed-size badge/card-fan content pokes up further above that anchor
-    point than a short, wide (desktop) table has room for. -->
-    <div
-      class="relative mb-3 mt-10 w-full aspect-[4/5] rounded-[3rem] border border-white/5 bg-gradient-to-b from-emerald-950/40 to-slate-950/40 transition-shadow sm:mt-0 sm:aspect-[16/13]"
-      :class="myTurn ? 'shadow-[0_0_0_2px_rgba(250,204,21,0.35),0_0_40px_rgba(250,204,21,0.12)]' : ''"
-    >
+    <!-- Opponents: a plain row, no table underneath them. -->
+    <div class="relative mb-2 flex items-start justify-center gap-4 sm:gap-8">
+      <span
+        v-if="hiddenOpponentCount > 0"
+        class="absolute -right-1 -top-1 rounded-full bg-slate-950/70 px-2 py-0.5 text-[10px] text-slate-400 backdrop-blur"
+      >
+        +{{ hiddenOpponentCount }} more
+      </span>
       <div
         v-for="p in opponentSeats"
         :key="p.uid"
-        class="absolute -translate-x-1/2 -translate-y-1/2 transition-transform"
+        class="relative transition-transform"
         :class="swapCandidateUids.has(p.uid) ? 'cursor-pointer hover:scale-110' : ''"
-        :style="p.style"
         :ref="(el) => setSeatRef(p.uid, el)"
         @click="onSeatClick(p)"
       >
@@ -1165,110 +1190,125 @@ onBeforeUnmount(() => {
           @catch="onCatch(p.uid)"
         />
       </div>
+    </div>
 
-      <!-- Center: piles + turn/stack banners -->
-      <div ref="tableCenterEl" class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3">
-        <p
-          class="rounded-full px-3 py-1 text-center font-display text-sm font-semibold shadow"
-          :class="
-            pendingDraw
-              ? 'bg-uno-red/90 text-white animate-pulse'
-              : myTurn
-                ? 'bg-uno-yellow text-uno-black'
-                : 'bg-slate-800/90 text-slate-300'
-          "
-        >
-          {{ turnBannerText }}
-          <span v-if="turnPauseActive" class="ml-1 opacity-80"> ({{ pauseSecondsLeft }}s)</span>
-          <span v-else-if="afkSecondsLeft !== null && afkSecondsLeft <= 5" class="ml-1 opacity-80">
-            (auto in {{ afkSecondsLeft }}s)
-          </span>
-        </p>
+    <!-- Center: turn banner + piles, filling whatever space is left. -->
+    <div ref="tableCenterEl" class="flex flex-1 flex-col items-center justify-center gap-3">
+      <p
+        class="rounded-full px-3 py-1 text-center font-display text-sm font-semibold shadow"
+        :class="
+          pendingDraw
+            ? 'bg-uno-red/90 text-white animate-pulse'
+            : myTurn
+              ? 'bg-uno-yellow text-uno-black'
+              : 'bg-slate-800/90 text-slate-300'
+        "
+      >
+        {{ turnBannerText }}
+        <span v-if="turnPauseActive" class="ml-1 opacity-80"> ({{ pauseSecondsLeft }}s)</span>
+        <span v-else-if="afkSecondsLeft !== null && afkSecondsLeft <= 5" class="ml-1 opacity-80">
+          (auto in {{ afkSecondsLeft }}s)
+        </span>
+      </p>
 
-        <!--
-          Wild Color Roulette reveal arch — per the rules the revealed cards
-          are public, so everyone at the table sees them land here, in the
-          open, before they get swept into the hunting player's hand.
-        -->
-        <div v-if="rouletteReveal" class="flex flex-col items-center gap-2 animate-pop">
-          <span class="rounded-full bg-slate-950/90 px-3 py-1 text-xs font-semibold text-slate-200 shadow">
-            Hunting for
-            <span class="font-bold capitalize" :style="{ color: COLOR_HEX[rouletteReveal.color] }">{{ rouletteReveal.color }}</span>
-            …
-          </span>
-          <div ref="rouletteArchEl" class="relative" :style="{ height: '96px', width: '100%' }">
-            <div
-              v-for="(card, i) in rouletteReveal.cards"
-              :key="card.id"
-              class="absolute left-1/2 top-0 origin-bottom animate-flip-in"
-              :style="revealCardStyle(i, rouletteReveal.total)"
-            >
-              <PlayingCard :card="card" size="md" />
-            </div>
-          </div>
-        </div>
-
-        <div class="relative flex items-center justify-center" :style="{ width: `${pilesBoxWidth}px`, height: `${pilesBoxHeight}px` }">
-          <!-- Big circular direction arrow, mirrored when play reverses -->
-          <svg
-            viewBox="0 0 440 280"
-            class="pointer-events-none absolute inset-0 h-full w-full transition-transform duration-500"
-            :class="game.direction === -1 ? '[transform:scaleX(-1)]' : ''"
+      <!--
+        Wild Color Roulette reveal arch — per the rules the revealed cards
+        are public, so everyone at the table sees them land here, in the
+        open, before they get swept into the hunting player's hand.
+      -->
+      <div v-if="rouletteReveal" class="flex flex-col items-center gap-2 animate-pop">
+        <span class="rounded-full bg-slate-950/90 px-3 py-1 text-xs font-semibold text-slate-200 shadow">
+          Hunting for
+          <span class="font-bold capitalize" :style="{ color: COLOR_HEX[rouletteReveal.color] }">{{ rouletteReveal.color }}</span>
+          …
+        </span>
+        <div ref="rouletteArchEl" class="relative" :style="{ height: '96px', width: '100%' }">
+          <div
+            v-for="(card, i) in rouletteReveal.cards"
+            :key="card.id"
+            class="absolute left-1/2 top-0 origin-bottom animate-flip-in"
+            :style="revealCardStyle(i, rouletteReveal.total)"
           >
-            <path :d="directionArcPath" fill="none" stroke="#facc15" stroke-width="10" stroke-linecap="round" opacity="0.85" />
-            <polygon :points="directionArrowPoints" fill="#facc15" opacity="1" />
-          </svg>
-
-          <div class="relative flex items-center gap-5">
-            <button type="button" class="flex flex-col items-center gap-1" ref="drawPileEl" @click="onDrawPile">
-              <PlayingCard
-                :card="null"
-                size="lg"
-                :playable="myTurn && !awaitingMyDrawDecision"
-                :flash="mustRespondToStack ? 'red' : noPlayableCards ? 'yellow' : ''"
-                animate-in="pop"
-                :key="game.drawPile.length"
-              />
-              <span
-                class="text-[11px]"
-                :class="mustRespondToStack ? 'font-bold text-uno-red' : noPlayableCards ? 'font-bold text-uno-yellow' : 'text-slate-500'"
-              >
-                {{ drawPileLabel }}
-              </span>
-            </button>
-
-            <div class="flex flex-col items-center gap-1" ref="discardPileEl">
-              <div class="relative rounded-xl" :style="{ boxShadow: `0 0 0 3px ${COLOR_HEX[game.currentColor]}` }">
-                <PlayingCard
-                  :card="top"
-                  size="lg"
-                  animate-in="flip"
-                  :tint-color="COLOR_HEX[game.currentColor]"
-                  :key="top?.id"
-                />
-              </div>
-              <span class="text-[11px] capitalize text-slate-500">{{ game.currentColor }}</span>
-            </div>
+            <PlayingCard :card="card" size="md" />
           </div>
         </div>
-
-        <button
-          v-if="awaitingMyDrawDecision"
-          type="button"
-          class="animate-pop rounded-lg border border-white/20 px-4 py-1.5 text-sm font-medium text-slate-300 hover:border-white/40"
-          @click="onPass"
-        >
-          Pass turn
-        </button>
       </div>
+
+      <div class="flex items-center gap-3">
+        <button type="button" class="flex flex-col items-center gap-1" ref="drawPileEl" @click="onDrawPile">
+          <PlayingCard
+            :card="null"
+            size="lg"
+            :compact="isMobileCardSize"
+            :playable="myTurn && !awaitingMyDrawDecision"
+            :flash="mustRespondToStack ? 'red' : noPlayableCards ? 'yellow' : ''"
+            animate-in="pop"
+            :key="game.drawPile.length"
+          />
+          <span
+            class="text-[11px]"
+            :class="mustRespondToStack ? 'font-bold text-uno-red' : noPlayableCards ? 'font-bold text-uno-yellow' : 'text-slate-500'"
+          >
+            {{ drawPileLabel }}
+          </span>
+        </button>
+
+        <!-- Small direction indicator, mirrored when play reverses -->
+        <svg
+          viewBox="0 0 60 40"
+          class="pointer-events-none h-6 w-9 shrink-0 transition-transform duration-500"
+          :class="game.direction === -1 ? '[transform:scaleX(-1)]' : ''"
+          aria-hidden="true"
+        >
+          <path :d="directionArcPath" fill="none" stroke="#facc15" stroke-width="4" stroke-linecap="round" opacity="0.85" />
+          <polygon :points="directionArrowPoints" fill="#facc15" opacity="1" />
+        </svg>
+
+        <div class="flex flex-col items-center gap-1" ref="discardPileEl">
+          <div class="relative rounded-xl" :style="{ boxShadow: `0 0 0 3px ${COLOR_HEX[game.currentColor]}` }">
+            <PlayingCard
+              :card="top"
+              size="lg"
+              :compact="isMobileCardSize"
+              animate-in="flip"
+              :tint-color="COLOR_HEX[game.currentColor]"
+              :key="top?.id"
+            />
+          </div>
+          <span class="text-[11px] capitalize text-slate-500">{{ game.currentColor }}</span>
+        </div>
+      </div>
+
+      <button
+        v-if="awaitingMyDrawDecision"
+        type="button"
+        class="animate-pop rounded-lg border border-white/20 px-4 py-1.5 text-sm font-medium text-slate-300 hover:border-white/40"
+        @click="onPass"
+      >
+        Pass turn
+      </button>
     </div>
 
     <p v-if="game.lastAction?.message" class="mb-2 text-center text-xs text-slate-500">
       {{ game.lastAction.message }}
     </p>
 
-    <!-- Spacer so page content isn't hidden behind the floating hand -->
-    <div :style="{ height: `${handTotalHeight + 46}px` }"></div>
+    <!-- UNO call button: fixed to the left-center edge — always reachable
+    one-handed regardless of hand scroll/fan position. -->
+    <button
+      v-if="showUnoButton"
+      type="button"
+      class="pointer-events-auto fixed left-3 top-1/2 z-40 -translate-y-1/2 animate-pulse-glow rounded-full bg-uno-red px-6 py-3 text-lg font-extrabold text-white shadow-lg"
+      @click="onCallUno"
+    >
+      UNO!
+    </button>
+
+    <!-- Spacer so page content isn't hidden behind the floating hand's
+    VISIBLE portion — the part deliberately pushed offscreen (see
+    handOffscreenPx) doesn't need protecting, or this squeezes the flex-1
+    center content above it down to nothing on a short landscape screen. -->
+    <div :style="{ height: `${Math.max(0, handTotalHeight - handOffscreenPx) + 46}px` }"></div>
 
     <!-- My hand: floats freely in front of everything, no boxed panel -->
     <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
@@ -1282,14 +1322,6 @@ onBeforeUnmount(() => {
         <span class="rounded-full bg-slate-950/70 px-2 py-0.5 text-xs text-slate-400 backdrop-blur">
           {{ myTurn && turnPauseActive ? 'Get ready…' : myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
         </span>
-        <button
-          v-if="showUnoButton"
-          type="button"
-          class="pointer-events-auto animate-pulse-glow rounded-full bg-uno-red px-3 py-1 text-xs font-bold text-white shadow"
-          @click="onCallUno"
-        >
-          UNO!
-        </button>
       </div>
       <!--
         A hand over HAND_ARC_SIZE cards (no cap on the Mercy limit means this
@@ -1298,7 +1330,7 @@ onBeforeUnmount(() => {
       -->
       <div
         class="pointer-events-auto flex flex-col items-center"
-        :style="{ gap: `${HAND_ARC_GAP}px` }"
+        :style="{ gap: `${HAND_ARC_GAP}px`, transform: `translateY(${handOffscreenPx}px)` }"
         ref="myHandEl"
         @mouseleave="clearHandHover"
       >
@@ -1319,6 +1351,7 @@ onBeforeUnmount(() => {
             <PlayingCard
               :card="card"
               size="xl"
+              :compact="isMobileCardSize"
               :playable="isCardPlayable(card)"
               :disabled="!isCardPlayable(card) && !isJumpInEligible(card)"
               :glow="isCardPlayable(card) && !pendingDraw"

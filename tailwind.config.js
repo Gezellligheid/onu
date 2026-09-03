@@ -76,6 +76,10 @@ export default {
           '0%, 100%': { opacity: '0.45' },
           '50%': { opacity: '0.9' },
         },
+        'rotate-hint': {
+          '0%, 100%': { transform: 'rotate(0deg)' },
+          '50%': { transform: 'rotate(90deg)' },
+        },
       },
       animation: {
         'deal-in': 'deal-in 0.35s ease-out',
@@ -91,6 +95,7 @@ export default {
         'flash-yellow': 'flash-yellow 0.8s steps(1, jump-end) infinite',
         'flash-red': 'flash-red 0.8s steps(1, jump-end) infinite',
         'edge-fade': 'edge-fade 2.4s ease-in-out infinite',
+        'rotate-hint': 'rotate-hint 1.6s ease-in-out infinite',
       },
     },
   },

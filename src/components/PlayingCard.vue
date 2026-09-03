@@ -12,6 +12,10 @@ const props = defineProps({
   flash: { type: String, default: '' }, // '', 'yellow', 'red' — strobing "you must draw" border
   animateIn: { type: String, default: '' }, // '', 'deal', 'flip', 'fly', 'pop'
   tintColor: { type: String, default: '' }, // hex color: recolors a Wild/Wild+4's white artwork once a color has been chosen
+  // Pins the card at its small (mobile) size even at a viewport width where
+  // it would normally bump up via the `sm:` breakpoint below — used in
+  // landscape-mobile, where width is generous but height isn't.
+  compact: { type: Boolean, default: false },
 })
 
 const sizes = {
@@ -19,6 +23,12 @@ const sizes = {
   md: 'w-16 h-24 rounded-xl',
   lg: 'w-20 h-28 sm:w-[112px] sm:h-[157px] rounded-2xl', // center piles
   xl: 'w-24 h-36 sm:w-[134px] sm:h-[202px] rounded-2xl', // your own hand
+}
+const compactSizes = {
+  sm: 'w-10 h-14 rounded-lg',
+  md: 'w-16 h-24 rounded-xl',
+  lg: 'w-20 h-28 rounded-2xl',
+  xl: 'w-24 h-36 rounded-2xl',
 }
 
 const enterAnim = {
@@ -70,7 +80,7 @@ const showTint = computed(() => props.card && (props.card.type === 'wild' || pro
   <div
     class="relative select-none transition-transform"
     :class="[
-      sizes[size],
+      compact ? compactSizes[size] : sizes[size],
       (playable || jumpIn) && !disabled ? 'cursor-pointer hover:-translate-y-2 hover:shadow-2xl' : '',
       flash === 'red'
         ? 'animate-flash-red'

@@ -30,16 +30,19 @@ export function isPlayable(card, top, currentColor) {
 }
 
 /**
- * While a Draw stack is pending, only a Draw-type card whose own value is
- * >= the value of the card that set the current threshold may be played —
- * color/number/symbol matching is suspended, same spirit as classic's
- * stacking but value-tiered instead of type-matched (a +6 can answer a +4,
- * a +2 cannot). While a Color Roulette pick is pending, nothing can be
- * played until it resolves.
+ * While a Draw stack is pending, the only legal plays are a Draw-type card
+ * whose own value is >= the value of the card that set the current
+ * threshold (same spirit as classic's stacking but value-tiered instead of
+ * type-matched — a +6 can answer a +4, a +2 cannot), a Skip (blocks the
+ * whole stack away — nobody draws), or a Reverse (redirects the whole
+ * stack back to whoever played it). While a Color Roulette pick is
+ * pending, nothing can be played until it resolves.
  */
 export function isPlayableNow(card, state) {
   if (state.pendingRoulette) return false
-  if (state.pendingDraw) return isDrawCard(card) && DRAW_VALUE[card.type] >= state.pendingDraw.lastValue
+  if (state.pendingDraw) {
+    return (isDrawCard(card) && DRAW_VALUE[card.type] >= state.pendingDraw.lastValue) || card.type === 'skip' || card.type === 'reverse'
+  }
   return isPlayable(card, topCard(state), state.currentColor)
 }
 
@@ -302,6 +305,22 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
     return
   }
   if (card.type === 'skip') {
+    if (state.pendingDraw) {
+      const total = state.pendingDraw.total
+      state.pendingDraw = null
+      stepIndex(state, 1)
+      const blocked = currentPlayerId(state)
+      stepIndex(state, 1)
+      state.lastAction = {
+        type: 'block-skip',
+        by: uid,
+        target: blocked,
+        card,
+        message: `${nameFor(state, uid)} blocks the +${total} with Skip — ${nameFor(state, blocked)} is blocked!`,
+      }
+      checkHandOutcome(state, uid)
+      return
+    }
     stepIndex(state, 1)
     const blocked = currentPlayerId(state)
     stepIndex(state, 1)
@@ -310,6 +329,19 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
     return
   }
   if (card.type === 'reverse') {
+    if (state.pendingDraw) {
+      const total = state.pendingDraw.total
+      state.direction *= -1
+      stepIndex(state, 1) // lands exactly on whoever stacked it onto uid
+      state.lastAction = {
+        type: 'redirect-reverse',
+        by: uid,
+        card,
+        message: `${nameFor(state, uid)} redirects the +${total} back with Reverse!`,
+      }
+      checkHandOutcome(state, uid)
+      return
+    }
     state.direction *= -1
     stepIndex(state, activePlayers(state).length === 2 ? 2 : 1)
     state.lastAction = { type: 'reverse', by: uid, card, message: `${nameFor(state, uid)} played Reverse.` }
@@ -397,7 +429,9 @@ export function playCard(state, uid, cardId, chosenColor, swapTargetUid) {
     }
   } else if (!isPlayableNow(card, next)) {
     if (next.pendingDraw) {
-      throw new Error(`You must stack a card worth ${next.pendingDraw.lastValue}+ or draw ${next.pendingDraw.total}.`)
+      throw new Error(
+        `You must stack a card worth ${next.pendingDraw.lastValue}+, block with Skip, redirect with Reverse, or draw ${next.pendingDraw.total}.`,
+      )
     }
     throw new Error('Card does not match color, number, or type.')
   }
