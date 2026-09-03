@@ -28,10 +28,15 @@ export function isPlayable(card, top, currentColor) {
  * whoever it lands on next inherits it), or a Reverse (redirects the whole
  * stack back to whoever played it) — everything else, including the
  * color/number matching rules above, is suspended until the stack is
- * resolved one of those ways or drawn.
+ * resolved one of those ways or drawn. Once you've drawn even one card
+ * against the stack (mustFinishDrawing), that window has closed — you're
+ * committed to drawing the rest, no more countering.
  */
 export function isPlayableNow(card, state) {
-  if (state.pendingDraw) return card.type === state.pendingDraw.type || card.type === 'skip' || card.type === 'reverse'
+  if (state.pendingDraw) {
+    if (state.mustFinishDrawing) return false
+    return card.type === state.pendingDraw.type || card.type === 'skip' || card.type === 'reverse'
+  }
   return isPlayable(card, topCard(state), state.currentColor)
 }
 
@@ -133,6 +138,7 @@ export function createRound(
     currentIndex: roundNumber > 1 ? (roundNumber - 1) % playerOrder.length : 0,
     direction: 1,
     pendingDraw: null,
+    mustFinishDrawing: null,
     jumpInEnabled,
     unoCalled: Object.fromEntries(playerOrder.map((uid) => [uid, false])),
     scores: nextScores,
@@ -210,6 +216,9 @@ export function playCard(state, uid, cardId, chosenColor) {
 
   const respondingToStack = !!next.pendingDraw
   if (respondingToStack) {
+    if (next.mustFinishDrawing) {
+      throw new Error(`You already started drawing — finish taking your ${next.pendingDraw.count} card(s) first.`)
+    }
     const canStack = card.type === next.pendingDraw.type
     const canSkipForward = card.type === 'skip'
     const canRedirect = card.type === 'reverse'
@@ -394,6 +403,7 @@ export function drawCard(state, uid) {
     next.lastDraw = { id: Date.now(), by: uid, cardIds: [card.id], forced: true }
     if (remaining <= 0) {
       next.pendingDraw = null
+      next.mustFinishDrawing = null
       stepIndex(next, 1)
       next.lastAction = {
         type: 'forced-draw',
@@ -402,6 +412,9 @@ export function drawCard(state, uid) {
       }
     } else {
       next.pendingDraw = { type, count: remaining }
+      // Drawing even one card against the stack forfeits any further
+      // chance to counter it — locks in until the whole amount is taken.
+      next.mustFinishDrawing = uid
       next.lastAction = {
         type: 'forced-draw-partial',
         by: uid,

@@ -36,12 +36,15 @@ export function isPlayable(card, top, currentColor) {
  * type-matched — a +6 can answer a +4, a +2 cannot), a Skip (passes the
  * whole stack one seat further along — the skipped player is spared, but
  * whoever it lands on next inherits it), or a Reverse (redirects the whole
- * stack back to whoever played it). While a Color Roulette pick is
- * pending, nothing can be played until it resolves.
+ * stack back to whoever played it). Once you've drawn even one card
+ * against the stack (mustFinishDrawing), that window has closed — you're
+ * committed to drawing the rest, no more countering. While a Color
+ * Roulette pick is pending, nothing can be played until it resolves.
  */
 export function isPlayableNow(card, state) {
   if (state.pendingRoulette) return false
   if (state.pendingDraw) {
+    if (state.mustFinishDrawing) return false
     return (isDrawCard(card) && DRAW_VALUE[card.type] >= state.pendingDraw.lastValue) || card.type === 'skip' || card.type === 'reverse'
   }
   return isPlayable(card, topCard(state), state.currentColor)
@@ -156,6 +159,7 @@ export function createRound(
     currentIndex: roundNumber > 1 ? (roundNumber - 1) % playerOrder.length : 0,
     direction: 1,
     pendingDraw: null,
+    mustFinishDrawing: null,
     pendingRoulette: null,
     pendingDrawnChoice: null,
     eliminated: Object.fromEntries(playerOrder.map((uid) => [uid, false])),
@@ -228,6 +232,7 @@ function eliminate(state, uid) {
   }
   if (wasCurrent) {
     state.pendingDraw = null
+    state.mustFinishDrawing = null
     stepIndex(state, 1)
   }
 }
@@ -426,6 +431,9 @@ export function playCard(state, uid, cardId, chosenColor, swapTargetUid) {
       throw new Error('You must play the card you just drew.')
     }
   } else if (!isPlayableNow(card, next)) {
+    if (next.pendingDraw && next.mustFinishDrawing) {
+      throw new Error(`You already started drawing — finish taking your ${next.pendingDraw.total} card(s) first.`)
+    }
     if (next.pendingDraw) {
       throw new Error(
         `You must stack a card worth ${next.pendingDraw.lastValue}+, skip it forward, redirect with Reverse, or draw ${next.pendingDraw.total}.`,
@@ -517,10 +525,14 @@ export function drawCard(state, uid) {
     next.lastDraw = { id: Date.now(), by: uid, cardIds: [card.id], forced: true }
     if (remaining <= 0) {
       next.pendingDraw = null
+      next.mustFinishDrawing = null
       stepIndex(next, 1)
       next.lastAction = { type: 'forced-draw', by: uid, message: `${nameFor(next, uid)} finishes drawing and is skipped.` }
     } else {
       next.pendingDraw = { lastValue: next.pendingDraw.lastValue, total: remaining }
+      // Drawing even one card against the stack forfeits any further
+      // chance to counter it — locks in until the whole amount is taken.
+      next.mustFinishDrawing = uid
       next.lastAction = { type: 'forced-draw-partial', by: uid, message: `${nameFor(next, uid)} draws one (${remaining} more to go)...` }
     }
     checkHandOutcome(next, uid)

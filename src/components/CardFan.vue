@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import PlayingCard from './PlayingCard.vue'
 
 const props = defineProps({
-  cards: { type: Array, required: true }, // only .length is used — opponents' faces stay hidden
+  cards: { type: Array, required: true }, // only .length is used unless reveal is on
+  reveal: { type: Boolean, default: false }, // spectator mode (eliminated): show real faces, not backs
 })
 
 const count = computed(() => props.cards.length)
@@ -31,7 +32,7 @@ function style(i, total) {
 <template>
   <div class="relative flex h-10 items-start justify-center" :style="{ width: `${fanWidth}px` }">
     <div v-for="i in count" :key="i" class="absolute left-1/2 top-0" :style="style(i - 1, count)">
-      <PlayingCard :card="null" size="sm" />
+      <PlayingCard :card="reveal ? cards[i - 1] : null" size="sm" />
     </div>
   </div>
 </template>

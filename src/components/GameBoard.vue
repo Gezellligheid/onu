@@ -292,9 +292,10 @@ const turnBannerText = computed(() => {
     }
     if (g.pendingDraw) {
       const target = g.playerOrder[g.currentIndex]
-      return target === uid.value
-        ? `Stack ${g.pendingDraw.lastValue}+, skip it forward, redirect, or draw ${g.pendingDraw.total}!`
-        : `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
+      if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
+      return g.mustFinishDrawing
+        ? `Keep drawing! ${g.pendingDraw.total} left`
+        : `Stack ${g.pendingDraw.lastValue}+, skip it forward, redirect, or draw ${g.pendingDraw.total}!`
     }
     const cur = g.playerOrder[g.currentIndex]
     return cur === uid.value ? 'Your turn' : `${nameOf(cur)}'s turn`
@@ -304,9 +305,10 @@ const turnBannerText = computed(() => {
   }
   if (g.pendingDraw) {
     const target = g.awaitingDrawDecision ? g.awaitingDrawDecision : g.playerOrder[g.currentIndex]
-    return target === uid.value
-      ? `Stack, skip it forward, redirect with Reverse, or draw ${g.pendingDraw.count}!`
-      : `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
+    if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
+    return g.mustFinishDrawing
+      ? `Keep drawing! ${g.pendingDraw.count} left`
+      : `Stack, skip it forward, redirect with Reverse, or draw ${g.pendingDraw.count}!`
   }
   if (g.awaitingDrawDecision) {
     return g.awaitingDrawDecision === uid.value ? 'Play your card or pass' : `${nameOf(g.awaitingDrawDecision)} is deciding…`
@@ -476,8 +478,48 @@ const swapCandidateUids = computed(() => {
 })
 
 function onSeatClick(p) {
+  // Eliminated: no more swap targets to choose (can't play a 7 with no
+  // cards) — a click instead toggles the peek-arc for touch/no-hover.
+  if (amEliminated.value) {
+    peekUid.value = peekUid.value === p.uid ? null : p.uid
+    return
+  }
   if (!pendingSwapCard.value || !swapCandidateUids.value.has(p.uid)) return
   onChooseSwapTarget(p.uid)
+}
+
+// ---- Spectator mode: once knocked out (No Mercy), you're just watching —
+// every remaining opponent's hand is shown face-up at their seat, and
+// hovering (or tapping, on touch) one enlarges it into a big arc at the
+// center of the table for a closer look. ----
+const amEliminated = computed(() => isNoMercy.value && !!game.value?.eliminated?.[uid.value])
+const peekUid = ref(null)
+function onSeatHoverEnter(p) {
+  if (amEliminated.value) peekUid.value = p.uid
+}
+function onSeatHoverLeave(p) {
+  if (peekUid.value === p.uid) peekUid.value = null
+}
+const peekPlayer = computed(() => {
+  if (!peekUid.value || !game.value) return null
+  const g = game.value
+  const p = g.players.find((pl) => pl.uid === peekUid.value)
+  if (!p) return null
+  return { uid: p.uid, name: p.name, cards: g.hands[p.uid] || [] }
+})
+// A compact, fit-to-width static arc — this is a glance, not something you
+// interact with card-by-card, so unlike your own hand it always compresses
+// to fit rather than scrolling.
+const PEEK_ARC_WIDTH = 760
+function peekCardStyle(i, total) {
+  if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
+  const mid = (total - 1) / 2
+  const offset = i - mid
+  const spacing = Math.min(64, Math.max(16, (PEEK_ARC_WIDTH - 140) / (total - 1)))
+  const rotate = offset * Math.min(5, 60 / total)
+  const x = offset * spacing
+  const y = Math.min(50, offset * offset * Math.min(3, 20 / total))
+  return { transform: `translateX(calc(-50% + ${x}px)) translateY(${y}px) rotate(${rotate}deg)`, zIndex: i }
 }
 
 async function onChooseColor(color) {
@@ -1221,9 +1263,11 @@ onBeforeUnmount(() => {
         v-for="p in opponentSeats"
         :key="p.uid"
         class="relative transition-transform"
-        :class="swapCandidateUids.has(p.uid) ? 'cursor-pointer hover:scale-110' : ''"
+        :class="swapCandidateUids.has(p.uid) || (amEliminated && !p.eliminated) ? 'cursor-pointer hover:scale-110' : ''"
         :ref="(el) => setSeatRef(p.uid, el)"
         @click="onSeatClick(p)"
+        @mouseenter="onSeatHoverEnter(p)"
+        @mouseleave="onSeatHoverLeave(p)"
       >
         <div
           v-if="swapCandidateUids.has(p.uid)"
@@ -1239,8 +1283,30 @@ onBeforeUnmount(() => {
           :can-catch="p.vulnerable"
           :waiting-on="p.waitingOn"
           :eliminated="p.eliminated"
+          :reveal="amEliminated"
           @catch="onCatch(p.uid)"
         />
+      </div>
+    </div>
+
+    <!-- Spectator peek: hovering (or tapping) an opponent while eliminated
+    enlarges their hand into a big arc at the center of the table. -->
+    <div
+      v-if="peekPlayer"
+      class="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-slate-950/70 backdrop-blur-sm"
+    >
+      <p class="rounded-full bg-slate-900/90 px-4 py-1.5 font-display text-sm font-bold text-uno-yellow shadow">
+        {{ peekPlayer.name }}'s hand ({{ peekPlayer.cards.length }})
+      </p>
+      <div class="relative" :style="{ width: `${PEEK_ARC_WIDTH}px`, height: '220px' }">
+        <div
+          v-for="(card, idx) in peekPlayer.cards"
+          :key="card.id"
+          class="absolute left-1/2 top-4 origin-bottom animate-pop"
+          :style="peekCardStyle(idx, peekPlayer.cards.length)"
+        >
+          <PlayingCard :card="card" size="lg" />
+        </div>
       </div>
     </div>
 

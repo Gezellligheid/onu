@@ -11,6 +11,7 @@ const props = defineProps({
   canCatch: { type: Boolean, default: false },
   waitingOn: { type: Boolean, default: false }, // must respond to a pending draw stack
   eliminated: { type: Boolean, default: false }, // No Mercy: knocked out (25+ cards), sitting out the rest of the round
+  reveal: { type: Boolean, default: false }, // viewer is spectating (eliminated themselves): show real faces
 })
 defineEmits(['catch'])
 
@@ -33,7 +34,7 @@ function initials(n) {
       class="pointer-events-none absolute -inset-5 -z-10 animate-pulse rounded-full bg-uno-yellow/40 blur-xl"
       aria-hidden="true"
     ></div>
-    <CardFan :cards="cards" />
+    <CardFan :cards="cards" :reveal="reveal" />
     <div class="relative">
       <div
         class="flex h-12 w-12 items-center justify-center rounded-full border-2 font-display text-sm font-bold transition"
