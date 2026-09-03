@@ -23,14 +23,15 @@ export function isPlayable(card, top, currentColor) {
 
 /**
  * House rule: stacking. While a +2/+4 chain is pending, the only legal
- * plays are cards of that same stack type (any color), a Skip (passes the
- * whole stack one seat further along — the skipped player is spared, but
- * whoever it lands on next inherits it), or a Reverse (redirects the whole
- * stack back to whoever played it) — everything else, including the
- * color/number matching rules above, is suspended until the stack is
- * resolved one of those ways or drawn. Once you've drawn even one card
- * against the stack (mustFinishDrawing), that window has closed — you're
- * committed to drawing the rest, no more countering.
+ * plays are cards of that same stack type (any color), a Skip (blocks the
+ * stack away entirely — just for the player who played it; nobody draws,
+ * and play continues to the next player normally, with no extra player
+ * skipped along the way), or a Reverse (redirects the whole stack back to
+ * whoever played it) — everything else, including the color/number
+ * matching rules above, is suspended until the stack is resolved one of
+ * those ways or drawn. Once you've drawn even one card against the stack
+ * (mustFinishDrawing), that window has closed — you're committed to
+ * drawing the rest, no more countering.
  */
 export function isPlayableNow(card, state) {
   if (state.pendingDraw) {
@@ -220,11 +221,11 @@ export function playCard(state, uid, cardId, chosenColor) {
       throw new Error(`You already started drawing — finish taking your ${next.pendingDraw.count} card(s) first.`)
     }
     const canStack = card.type === next.pendingDraw.type
-    const canSkipForward = card.type === 'skip'
+    const canBlock = card.type === 'skip'
     const canRedirect = card.type === 'reverse'
-    if (!canStack && !canSkipForward && !canRedirect) {
+    if (!canStack && !canBlock && !canRedirect) {
       const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
-      throw new Error(`You must stack another ${label}, skip it forward, redirect with Reverse, or draw ${next.pendingDraw.count} cards.`)
+      throw new Error(`You must stack another ${label}, block with Skip, redirect with Reverse, or draw ${next.pendingDraw.count} cards.`)
     }
   } else if (!isPlayable(card, topCard(next), next.currentColor)) {
     throw new Error('Card does not match color, number, or type.')
@@ -260,21 +261,23 @@ export function playCard(state, uid, cardId, chosenColor) {
     stepIndex(next, 1)
     next.lastAction = { type: 'play', by: uid, card, message: `${nameFor(next, uid)} played ${describeCard(card)}.` }
   } else if (card.type === 'skip') {
-    const blocked = next.playerOrder[(next.currentIndex + next.direction + n * 10) % n]
-    stepIndex(next, 2)
     if (respondingToStack) {
-      // The stack itself isn't touched — it passes straight through to
-      // whoever the skip lands on, same as the person who just played it
-      // was on the hook a moment ago.
+      // Blocks the stack only for the player who played it — the stack is
+      // simply gone, and play continues to the next player normally, with
+      // no extra player skipped along the way (that's what a Skip does on
+      // a normal turn, but not here).
       const label = next.pendingDraw.type === 'wild4' ? 'Wild +4' : '+2'
+      next.pendingDraw = null
+      stepIndex(next, 1)
       next.lastAction = {
-        type: 'skip-stack',
+        type: 'block-skip',
         by: uid,
-        target: blocked,
         card,
-        message: `${nameFor(next, uid)} skips the ${label} past ${nameFor(next, blocked)} onto ${nameFor(next, currentPlayerId(next))}!`,
+        message: `${nameFor(next, uid)} blocks the ${label} with Skip!`,
       }
     } else {
+      const blocked = next.playerOrder[(next.currentIndex + next.direction + n * 10) % n]
+      stepIndex(next, 2)
       next.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(next, blocked)} is blocked!` }
     }
   } else if (card.type === 'reverse') {

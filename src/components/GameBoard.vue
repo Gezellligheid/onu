@@ -295,7 +295,7 @@ const turnBannerText = computed(() => {
       if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
       return g.mustFinishDrawing
         ? `Keep drawing! ${g.pendingDraw.total} left`
-        : `Stack ${g.pendingDraw.lastValue}+, skip it forward, redirect, or draw ${g.pendingDraw.total}!`
+        : `Stack ${g.pendingDraw.lastValue}+, block with Skip, redirect, or draw ${g.pendingDraw.total}!`
     }
     const cur = g.playerOrder[g.currentIndex]
     return cur === uid.value ? 'Your turn' : `${nameOf(cur)}'s turn`
@@ -308,7 +308,7 @@ const turnBannerText = computed(() => {
     if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
     return g.mustFinishDrawing
       ? `Keep drawing! ${g.pendingDraw.count} left`
-      : `Stack, skip it forward, redirect with Reverse, or draw ${g.pendingDraw.count}!`
+      : `Stack, block with Skip, redirect with Reverse, or draw ${g.pendingDraw.count}!`
   }
   if (g.awaitingDrawDecision) {
     return g.awaitingDrawDecision === uid.value ? 'Play your card or pass' : `${nameOf(g.awaitingDrawDecision)} is deciding…`

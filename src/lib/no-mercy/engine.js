@@ -33,13 +33,14 @@ export function isPlayable(card, top, currentColor) {
  * While a Draw stack is pending, the only legal plays are a Draw-type card
  * whose own value is >= the value of the card that set the current
  * threshold (same spirit as classic's stacking but value-tiered instead of
- * type-matched — a +6 can answer a +4, a +2 cannot), a Skip (passes the
- * whole stack one seat further along — the skipped player is spared, but
- * whoever it lands on next inherits it), or a Reverse (redirects the whole
- * stack back to whoever played it). Once you've drawn even one card
- * against the stack (mustFinishDrawing), that window has closed — you're
- * committed to drawing the rest, no more countering. While a Color
- * Roulette pick is pending, nothing can be played until it resolves.
+ * type-matched — a +6 can answer a +4, a +2 cannot), a Skip (blocks the
+ * stack away entirely — just for the player who played it; nobody draws,
+ * and play continues to the next player normally, with no extra player
+ * skipped along the way), or a Reverse (redirects the whole stack back to
+ * whoever played it). Once you've drawn even one card against the stack
+ * (mustFinishDrawing), that window has closed — you're committed to
+ * drawing the rest, no more countering. While a Color Roulette pick is
+ * pending, nothing can be played until it resolves.
  */
 export function isPlayableNow(card, state) {
   if (state.pendingRoulette) return false
@@ -311,23 +312,27 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
     return
   }
   if (card.type === 'skip') {
+    if (state.pendingDraw) {
+      // Blocks the stack only for the player who played it — the stack is
+      // simply gone, and play continues to the next player normally, with
+      // no extra player skipped along the way (that's what a Skip does on
+      // a normal turn, but not here).
+      const total = state.pendingDraw.total
+      state.pendingDraw = null
+      stepIndex(state, 1)
+      state.lastAction = {
+        type: 'block-skip',
+        by: uid,
+        card,
+        message: `${nameFor(state, uid)} blocks the +${total} with Skip!`,
+      }
+      checkHandOutcome(state, uid)
+      return
+    }
     stepIndex(state, 1)
     const blocked = currentPlayerId(state)
     stepIndex(state, 1)
-    if (state.pendingDraw) {
-      // The stack itself isn't touched — it passes straight through to
-      // whoever the skip lands on, same as the person who just played it
-      // was on the hook a moment ago.
-      state.lastAction = {
-        type: 'skip-stack',
-        by: uid,
-        target: blocked,
-        card,
-        message: `${nameFor(state, uid)} skips the +${state.pendingDraw.total} past ${nameFor(state, blocked)} onto ${nameFor(state, currentPlayerId(state))}!`,
-      }
-    } else {
-      state.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(state, blocked)} is blocked!` }
-    }
+    state.lastAction = { type: 'skip', by: uid, target: blocked, card, message: `${nameFor(state, blocked)} is blocked!` }
     checkHandOutcome(state, uid)
     return
   }
@@ -436,7 +441,7 @@ export function playCard(state, uid, cardId, chosenColor, swapTargetUid) {
     }
     if (next.pendingDraw) {
       throw new Error(
-        `You must stack a card worth ${next.pendingDraw.lastValue}+, skip it forward, redirect with Reverse, or draw ${next.pendingDraw.total}.`,
+        `You must stack a card worth ${next.pendingDraw.lastValue}+, block with Skip, redirect with Reverse, or draw ${next.pendingDraw.total}.`,
       )
     }
     throw new Error('Card does not match color, number, or type.')
