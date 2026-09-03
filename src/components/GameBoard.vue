@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
 import { getEngine } from '../lib/uno/modes.js'
@@ -95,14 +95,13 @@ function isCardPlayable(card) {
 }
 
 // Your own hand fans out in a slight arc, center raised — like cards held
-// in two hands — instead of a flat overlapping row. The arc widens as you
-// draw more cards (using up to the full screen width) and packs denser once
-// it would otherwise run off the edge of the screen. No Mercy hands can get
-// huge (the Mercy limit has no cap), so density alone isn't enough once
-// spacing gets tiny — hovering near a card then ripples it and ~4 neighbors
-// apart (see RIPPLE_* below) so you can still pick out and click the one you
-// want, without ever needing a scrollbar.
-const HAND_MAX_SPACING = 81
+// in two hands — instead of a flat overlapping row. One continuous arc
+// regardless of hand size (No Mercy hands can get huge — no cap on the
+// Mercy limit): it's allowed to run wider than the screen, scrollable
+// horizontally, rather than compressing to force a fit. Hovering near a
+// card still ripples it and ~4 neighbors apart (see RIPPLE_* below) so
+// overlapping cards stay easy to pick out and click.
+const HAND_MAX_SPACING = 58
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
 const viewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 800)
 function onResize() {
@@ -122,8 +121,6 @@ const isLandscapeMobile = computed(() => viewportWidth.value > viewportHeight.va
 // player to rotate rather than trying to cram the board into a tall sliver.
 const isNarrowPortrait = computed(() => viewportHeight.value >= viewportWidth.value && viewportWidth.value < 820)
 
-const handAvailableWidth = computed(() => Math.max(240, viewportWidth.value - 48))
-
 // The hand box's fixed height only needs to fit the (mobile-shrunk) card
 // height plus its droop — 260px was tuned for the desktop xl card.
 const handBoxHeight = computed(() => (isMobileCardSize.value ? 200 : 260))
@@ -135,92 +132,120 @@ const HAND_EDGE_PAD = 12
 // and tap a card; hovering/tapping still lifts it via the ripple effect.
 const handOffscreenPx = computed(() => (isLandscapeMobile.value ? Math.round(handBoxHeight.value * 0.4) : 0))
 
-// Once a hand grows past HAND_ARC_SIZE cards (No Mercy's Mercy limit has no
-// cap, so this genuinely happens), it splits into multiple fans of up to
-// HAND_ARC_SIZE cards each, stacked one under another — each arc dense-packs
-// and ripples independently instead of one single fan getting absurdly thin.
-const HAND_ARC_SIZE = 40
-const HAND_ARC_GAP = -30 // negative = arcs overlap slightly, reading as one tighter stack instead of far-apart rows
-const handArcs = computed(() => {
-  const hand = sortedHand.value
-  if (hand.length === 0) return [[]]
-  const arcs = []
-  for (let i = 0; i < hand.length; i += HAND_ARC_SIZE) arcs.push(hand.slice(i, i + HAND_ARC_SIZE))
-  return arcs
-})
-const handTotalHeight = computed(
-  () => handBoxHeight.value * handArcs.value.length + HAND_ARC_GAP * Math.max(handArcs.value.length - 1, 0),
-)
-
-// No floor here on purpose — the whole fan always has to fit in
-// handAvailableWidth with zero scrolling, however dense that makes it. The
-// spacing is between CARD CENTERS, but each card is HAND_CARD_PX wide, so a
-// card's edge sticks out half its width past its center — that overhang has
-// to come out of the available width too, or the outermost cards still run
-// off-screen even though their centers technically fit.
-function handSpacing(total) {
-  if (total <= 1) return HAND_MAX_SPACING
-  const fit = (handAvailableWidth.value - HAND_CARD_PX.value - HAND_EDGE_PAD) / (total - 1)
-  return Math.min(HAND_MAX_SPACING, Math.max(0, fit))
+// One continuous arc — always the full natural spacing, never compressed.
+// A big hand just makes for a wide fan; the scroll container (template)
+// handles the overflow instead of squeezing cards down to fit.
+function handSpacing() {
+  return HAND_MAX_SPACING
 }
-// Capped so the droop never outgrows the fan's fixed-height box (260px).
+// Fixed per-card curve (not scaled down as the hand grows) so the arc's
+// local shape stays consistent whether you're holding 7 cards or 70 —
+// a long hand just reads as more of the same curve, scrolled into view.
+const ROTATE_PER_CARD = 3.2
+const DROOP_PER_CARD = 1.5
+// Capped so the droop never outgrows the fan's fixed-height box.
 const HAND_Y_DROOP_CAP = 40
 
+// Total width of the single arc — mirrors the same card-overhang + edge-pad
+// accounting handCardStyle uses, so the outermost cards never get clipped.
+const fanWidth = computed(
+  () => Math.max(sortedHand.value.length - 1, 0) * handSpacing() + HAND_CARD_PX.value + HAND_EDGE_PAD,
+)
+
 // ---- Hover ripple: which card the mouse is currently over parts it and its
-// nearest neighbors apart (and lifts/enlarges them) so a densely packed hand
-// stays fully clickable — this is what replaces scrolling. Scoped per arc
-// (arcIdx + card index) so hovering one arc never ripples a different one. ----
-const hoverArc = ref(null)
+// nearest neighbors apart (and lifts/enlarges them) so overlapping cards
+// stay easy to click. ----
 const hoverCardIndex = ref(null)
 const RIPPLE_RADIUS = 2.4 // ~5 cards feel it (the hovered one + 2 each side)
 const RIPPLE_PUSH = 46 // px the nearest neighbors get shoved apart, at peak
 const RIPPLE_LIFT = 20 // px risen up, at peak
 const RIPPLE_SCALE = 0.14 // extra scale, at peak
-function onCardHoverEnter(arcIdx, i) {
-  hoverArc.value = arcIdx
+function onCardHoverEnter(i) {
   hoverCardIndex.value = i
 }
-function onCardHoverLeave(arcIdx, i) {
-  if (hoverArc.value === arcIdx && hoverCardIndex.value === i) {
-    hoverArc.value = null
-    hoverCardIndex.value = null
-  }
+function onCardHoverLeave(i) {
+  if (hoverCardIndex.value === i) hoverCardIndex.value = null
 }
 function clearHandHover() {
-  hoverArc.value = null
   hoverCardIndex.value = null
 }
 
-// Touch has no hover — sliding a finger across the (densely packed, mostly
-// offscreen-on-mobile) hand drives the exact same ripple, via whatever card
-// element is actually under the touch point. Only wired to touchmove (not
-// touchstart): calling preventDefault there would suppress the synthetic
-// click a plain tap relies on, breaking tap-to-play. touch-action: none on
-// the container (template) stops the slide from also scrolling the page,
-// without touching click semantics.
+// ---- Edge-scroll: once the hand is wider than the screen, moving your
+// pointer (mouse or a touch drag) near the left/right edge of the screen
+// auto-scrolls the hand in that direction — faster the closer to the edge —
+// instead of requiring a precise swipe gesture to reach the far end. Reuses
+// myHandEl (below) — it's the scroll container itself now, not just an
+// animation anchor. ----
+const EDGE_SCROLL_ZONE = 90 // px from the screen edge that starts scrolling
+const EDGE_SCROLL_MAX_SPEED = 26 // px per animation frame, right at the edge
+let edgeScrollDir = 0 // -1 left, 0 none, 1 right
+let edgeScrollSpeed = 0
+let edgeScrollRaf = null
+function updateEdgeScroll(clientX) {
+  const vw = window.innerWidth
+  if (clientX < EDGE_SCROLL_ZONE) {
+    edgeScrollDir = -1
+    edgeScrollSpeed = EDGE_SCROLL_MAX_SPEED * (1 - clientX / EDGE_SCROLL_ZONE)
+  } else if (clientX > vw - EDGE_SCROLL_ZONE) {
+    edgeScrollDir = 1
+    edgeScrollSpeed = EDGE_SCROLL_MAX_SPEED * (1 - (vw - clientX) / EDGE_SCROLL_ZONE)
+  } else {
+    edgeScrollDir = 0
+  }
+  if (edgeScrollDir !== 0 && edgeScrollRaf === null) {
+    const step = () => {
+      if (edgeScrollDir === 0 || !myHandEl.value) {
+        edgeScrollRaf = null
+        return
+      }
+      myHandEl.value.scrollLeft += edgeScrollDir * edgeScrollSpeed
+      edgeScrollRaf = requestAnimationFrame(step)
+    }
+    edgeScrollRaf = requestAnimationFrame(step)
+  }
+}
+function stopEdgeScroll() {
+  edgeScrollDir = 0
+  if (edgeScrollRaf) {
+    cancelAnimationFrame(edgeScrollRaf)
+    edgeScrollRaf = null
+  }
+}
+function onHandPointerLeave() {
+  clearHandHover()
+  stopEdgeScroll()
+}
+function onHandMouseMove(e) {
+  updateEdgeScroll(e.clientX)
+}
+// Touch has no hover — sliding a finger across the hand drives the exact
+// same ripple, via whatever card element is actually under the touch
+// point, and the same edge-scroll as a mouse near the screen edge. Only
+// wired to touchmove (not touchstart): calling preventDefault there would
+// suppress the synthetic click a plain tap relies on, breaking tap-to-play.
+// touch-action: pan-x on the container (template) still allows a direct
+// horizontal swipe to scroll natively, just not vertically/pinch-zoom.
 function onHandTouchMove(e) {
   const touch = e.touches[0]
   if (!touch) return
-  const el = document.elementFromPoint(touch.clientX, touch.clientY)
-  const cardEl = el?.closest('[data-arc-idx]')
-  if (!cardEl) return
-  onCardHoverEnter(Number(cardEl.dataset.arcIdx), Number(cardEl.dataset.cardIdx))
+  const cardEl = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('[data-card-idx]')
+  if (cardEl) onCardHoverEnter(Number(cardEl.dataset.cardIdx))
+  updateEdgeScroll(touch.clientX)
 }
 
-function handCardStyle(arcIdx, i, total) {
+function handCardStyle(i, total) {
   if (total <= 1) return { transform: 'translateX(-50%)', zIndex: i }
   const mid = (total - 1) / 2
   const offset = i - mid
-  const spacing = handSpacing(total)
-  const rotate = offset * Math.min(6, 46 / total)
+  const spacing = handSpacing()
+  const rotate = offset * ROTATE_PER_CARD
   let x = offset * spacing
-  let y = Math.min(HAND_Y_DROOP_CAP, offset * offset * Math.min(3.4, 22 / total))
+  let y = Math.min(HAND_Y_DROOP_CAP, offset * offset * DROOP_PER_CARD)
   let scale = 1
   let z = i
 
-  const hovered = hoverArc.value === arcIdx ? hoverCardIndex.value : null
-  if (hovered !== null) {
-    const dist = i - hovered
+  if (hoverCardIndex.value !== null) {
+    const dist = i - hoverCardIndex.value
     const absDist = Math.abs(dist)
     if (absDist <= RIPPLE_RADIUS) {
       // Eased falloff (1 at the hovered card, 0 at the edge of the ripple) —
@@ -238,15 +263,6 @@ function handCardStyle(arcIdx, i, total) {
     zIndex: z,
   }
 }
-// Natural width of one arc's fan at its (always screen-safe) dense spacing —
-// mirrors the same card-overhang + edge-pad accounting as handSpacing, so
-// this never exceeds handAvailableWidth. The overall hand container is sized
-// to the widest arc (normally all of them, except perhaps a shorter last one).
-function fanWidthFor(total) {
-  return Math.max(total - 1, 0) * handSpacing(total) + HAND_CARD_PX.value + HAND_EDGE_PAD
-}
-const handFanWidth = computed(() => handArcs.value.reduce((max, arc) => Math.max(max, fanWidthFor(arc.length)), 0))
-
 const noPlayableCards = computed(() => {
   const g = game.value
   if (isNoMercy.value) {
@@ -586,8 +602,23 @@ async function onLeave() {
 // real state has settled underneath. ----
 const discardPileEl = ref(null)
 const drawPileEl = ref(null)
-const myHandEl = ref(null)
+const myHandEl = ref(null) // also the hand's horizontal scroll container
 const seatEls = {}
+
+// When the fan is wider than the screen, start scrolled to its middle
+// instead of its left edge — sorted hands tend to have the "interesting"
+// cards spread across the whole width, not clustered at the start. Only on
+// mount and at a new round's fresh deal, not every card played/drawn —
+// re-centering mid-play would fight whatever the player just scrolled to.
+function centerHandScroll() {
+  nextTick(() => {
+    const el = myHandEl.value
+    if (!el) return
+    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
+  })
+}
+onMounted(centerHandScroll)
+watch(() => game.value?.roundNumber, centerHandScroll)
 function setSeatRef(id, el) {
   if (el) seatEls[id] = el
   else delete seatEls[id]
@@ -1133,6 +1164,7 @@ onBeforeUnmount(() => {
   clearTimeout(toastTimer)
   clearTimeout(blockedFlashTimer)
   clearRouletteRevealTimers()
+  stopEdgeScroll()
 })
 </script>
 
@@ -1334,7 +1366,7 @@ onBeforeUnmount(() => {
     VISIBLE portion — the part deliberately pushed offscreen (see
     handOffscreenPx) doesn't need protecting, or this squeezes the flex-1
     center content above it down to nothing on a short landscape screen. -->
-    <div :style="{ height: `${Math.max(0, handTotalHeight - handOffscreenPx) + 46}px` }"></div>
+    <div :style="{ height: `${Math.max(0, handBoxHeight - handOffscreenPx) + 46}px` }"></div>
 
     <!-- My hand: floats freely in front of everything, no boxed panel -->
     <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
@@ -1350,38 +1382,31 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <!--
-        A hand over HAND_ARC_SIZE cards (no cap on the Mercy limit means this
-        genuinely happens) splits into multiple fans stacked one under
-        another instead of one fan getting absurdly thin.
+        One continuous arc, allowed to run wider than the screen (No Mercy
+        hands can get huge — no cap on the Mercy limit) — scrolls
+        horizontally instead of compressing to force a fit. no-scrollbar
+        hides the native scrollbar; touch-action: pan-x still allows a
+        direct swipe to scroll, on top of the edge-triggered auto-scroll.
       -->
       <div
-        class="pointer-events-auto flex flex-col items-center"
-        :style="{
-          gap: `${HAND_ARC_GAP}px`,
-          transform: `translateY(${handOffscreenPx}px)`,
-          touchAction: 'none',
-        }"
+        class="no-scrollbar pointer-events-auto w-full overflow-x-auto"
+        :style="{ transform: `translateY(${handOffscreenPx}px)`, touchAction: 'pan-x' }"
         ref="myHandEl"
-        @mouseleave="clearHandHover"
+        @mousemove="onHandMouseMove"
+        @mouseleave="onHandPointerLeave"
         @touchmove="onHandTouchMove"
-        @touchend="clearHandHover"
-        @touchcancel="clearHandHover"
+        @touchend="onHandPointerLeave"
+        @touchcancel="onHandPointerLeave"
       >
-        <div
-          v-for="(arc, arcIdx) in handArcs"
-          :key="arcIdx"
-          class="relative"
-          :style="{ width: `${fanWidthFor(arc.length)}px`, height: `${handBoxHeight}px` }"
-        >
+        <div class="relative mx-auto" :style="{ width: `${fanWidth}px`, height: `${handBoxHeight}px` }">
           <div
-            v-for="(card, idx) in arc"
+            v-for="(card, idx) in sortedHand"
             :key="card.id"
             class="absolute left-1/2 top-4 origin-bottom transition-transform duration-150"
-            :style="handCardStyle(arcIdx, idx, arc.length)"
-            :data-arc-idx="arcIdx"
+            :style="handCardStyle(idx, sortedHand.length)"
             :data-card-idx="idx"
-            @mouseenter="onCardHoverEnter(arcIdx, idx)"
-            @mouseleave="onCardHoverLeave(arcIdx, idx)"
+            @mouseenter="onCardHoverEnter(idx)"
+            @mouseleave="onCardHoverLeave(idx)"
           >
             <PlayingCard
               :card="card"
@@ -1393,7 +1418,7 @@ onBeforeUnmount(() => {
               :urgent="isCardPlayable(card) && !!pendingDraw"
               :jump-in="!isCardPlayable(card) && isJumpInEligible(card)"
               animate-in="deal"
-              :style="{ animationDelay: `${(arcIdx * HAND_ARC_SIZE + idx) * 35}ms` }"
+              :style="{ animationDelay: `${Math.min(idx, 30) * 20}ms` }"
               @click="onCardClick(card)"
             />
           </div>
