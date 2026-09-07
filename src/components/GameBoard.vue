@@ -295,7 +295,7 @@ const turnBannerText = computed(() => {
       if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.total} stack!`
       return g.mustFinishDrawing
         ? `Keep drawing! ${g.pendingDraw.total} left`
-        : `Stack ${g.pendingDraw.lastValue}+, block with Skip, redirect, or draw ${g.pendingDraw.total}!`
+        : `Stack ${g.pendingDraw.lastValue}+, skip it forward, redirect, or draw ${g.pendingDraw.total}!`
     }
     const cur = g.playerOrder[g.currentIndex]
     return cur === uid.value ? 'Your turn' : `${nameOf(cur)}'s turn`
@@ -308,7 +308,7 @@ const turnBannerText = computed(() => {
     if (target !== uid.value) return `${nameOf(target)} must respond to the +${g.pendingDraw.count} stack!`
     return g.mustFinishDrawing
       ? `Keep drawing! ${g.pendingDraw.count} left`
-      : `Stack, block with Skip, redirect with Reverse, or draw ${g.pendingDraw.count}!`
+      : `Stack, skip it forward, redirect with Reverse, or draw ${g.pendingDraw.count}!`
   }
   if (g.awaitingDrawDecision) {
     return g.awaitingDrawDecision === uid.value ? 'Play your card or pass' : `${nameOf(g.awaitingDrawDecision)} is deciding…`
@@ -936,6 +936,7 @@ watch(
       case 'skip':
       case 'starter-skip':
       case 'skipEveryone':
+      case 'skip-stack':
         enqueue(() => sfx.skip())
         break
       case 'reverse':
@@ -1046,7 +1047,7 @@ watch(
       spawnLabel(endpointFor(la.by), { el: tableCenterEl.value, size: 0, alignLeft: false }, 'uno')
     }
 
-    if ((la?.type === 'skip' || la?.type === 'starter-skip') && la.target) {
+    if ((la?.type === 'skip' || la?.type === 'starter-skip' || la?.type === 'skip-stack') && la.target) {
       const to = endpointFor(la.target)
       if (la.by) spawnLabel(endpointFor(la.by), to, 'block')
       if (la.target === uid.value) triggerBlockedFlash()
