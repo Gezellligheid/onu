@@ -987,6 +987,36 @@ watch(
         cardFlyDelay,
       )
     }
+    // No Mercy's 7-swap and 0-pass don't just discard a card — whole hands
+    // change owners. Animate that exchange too (face-down batches, after
+    // the played card itself has landed) so it's visible who's getting
+    // whose cards, not just that a 7/0 was played.
+    if (la?.type === 'swap7' && la.target) {
+      const swapFlyDelay = 380
+      setTimeout(() => {
+        const byHand = g.hands[la.by] || []
+        const targetHand = g.hands[la.target] || []
+        // by ended up with target's old hand, and vice versa — animate each
+        // batch traveling to where it now lives.
+        spawnFlyBatch(endpointFor(la.target), endpointFor(la.by), byHand.map(() => null))
+        spawnFlyBatch(endpointFor(la.by), endpointFor(la.target), targetHand.map(() => null))
+      }, swapFlyDelay)
+    }
+    if (la?.type === 'pass0') {
+      const passFlyDelay = 380
+      setTimeout(() => {
+        const order = activeEngine.value.activePlayers ? activeEngine.value.activePlayers(g) : g.playerOrder
+        const n = order.length
+        if (n >= 2) {
+          order.forEach((destUid, i) => {
+            const fromIdx = ((i - g.direction) % n + n) % n
+            const sourceUid = order[fromIdx]
+            const hand = g.hands[destUid] || []
+            spawnFlyBatch(endpointFor(sourceUid), endpointFor(destUid), hand.map(() => null))
+          })
+        }
+      }, passFlyDelay)
+    }
     // Discard All dumps every matching-color card from the hand at once —
     // animate every one of them flying out, not just the card that was played.
     if (la?.type === 'discardAll' && la.dumpedCards?.length && discardPileEl.value) {
