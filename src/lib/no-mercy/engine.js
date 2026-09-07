@@ -279,13 +279,17 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
     finishRound(state, uid)
     return
   }
-  if (hand.length === 1) state.unoCalled[uid] = false
 
   if (card.type === 'number' && card.value === 7) {
     const target = swapTargetUid
     const tmp = state.hands[uid]
     state.hands[uid] = state.hands[target]
     state.hands[target] = tmp
+    // Whatever either of them called UNO on a moment ago was about their
+    // OLD hand — it doesn't carry over to the different cards they just
+    // received, even if the new hand also happens to land on one card.
+    state.unoCalled[uid] = false
+    state.unoCalled[target] = false
     state.lastAction = {
       type: 'swap7',
       by: uid,
@@ -300,6 +304,9 @@ function applyCardEffect(state, uid, card, { swapTargetUid } = {}) {
   }
   if (card.type === 'number' && card.value === 0) {
     rotateHands(state)
+    // Same reasoning as the 7-swap: everyone's hand just got replaced with
+    // someone else's, so any earlier UNO call no longer applies to it.
+    for (const pid of activePlayers(state)) state.unoCalled[pid] = false
     state.lastAction = { type: 'pass0', by: uid, card, message: `${nameFor(state, uid)} plays 0 — hands pass around!` }
     stepIndex(state, 1)
     for (const pid of activePlayers(state)) checkHandOutcome(state, pid)
@@ -618,7 +625,15 @@ export function callUno(state, uid) {
   const hand = next.hands[uid]
   if (!hand) throw new Error('Unknown player.')
   if (next.eliminated[uid]) throw new Error('You have been knocked out of this round.')
-  if (hand.length !== 1) throw new Error('You can only call UNO when you have exactly one card.')
+  // Official looser rule: callable any time you're sitting on one card, not
+  // gated on whose turn it is. Also callable pre-emptively — on your turn,
+  // right before playing what will become your last card — same idea as
+  // classic's strict rule, offered here as an extra option rather than the
+  // only one.
+  const isPreemptive = hand.length === 2 && currentPlayerId(next) === uid && hand.some((c) => isPlayableNow(c, next))
+  if (hand.length !== 1 && !isPreemptive) {
+    throw new Error('You can only call UNO when you have exactly one card, or right before playing your second-to-last.')
+  }
   next.unoCalled[uid] = true
   next.lastAction = { type: 'uno-call', by: uid, message: `${nameFor(next, uid)} called UNO!` }
   next.updatedAt = Date.now()

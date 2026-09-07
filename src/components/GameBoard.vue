@@ -590,12 +590,21 @@ async function onPass() {
 
 // Classic: strict rule, only callable in the exact moment you're about to
 // play your second-to-last card — on your turn, holding exactly 2, with a
-// legal play. No Mercy: looser official rule — call any time you're sitting
-// on exactly 1 card, not gated on whose turn it is.
+// legal play. No Mercy: the same pre-emptive call is available, plus the
+// looser official rule of calling any time you're sitting on exactly 1
+// card, not gated on whose turn it is.
 const showUnoButton = computed(() => {
   const g = game.value
   if (g.unoCalled[uid.value]) return false
-  if (isNoMercy.value) return myHand.value.length === 1
+  if (isNoMercy.value) {
+    if (myHand.value.length === 1) return true
+    // Pre-emptive: on your turn, right before playing what will become
+    // your last card — same option classic mode already offers.
+    if (myHand.value.length === 2 && myTurn.value) {
+      return myHand.value.some((c) => activeEngine.value.isPlayableNow(c, g))
+    }
+    return false
+  }
   if (myHand.value.length !== 2) return false
   // Jump-In: you may also call the instant before jumping in out of turn.
   if (myTurn.value) return myHand.value.some((c) => activeEngine.value.isPlayableNow(c, g))
