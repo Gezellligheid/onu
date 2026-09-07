@@ -1382,19 +1382,15 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="relative flex items-center gap-3">
-        <!-- UNO call button: sits just left of the piles on desktop; on
-        landscape-mobile it switches to a fixed left-edge placement instead,
-        always reachable one-handed regardless of hand scroll/fan position. -->
+      <div class="flex items-center gap-3">
+        <!-- On landscape-mobile, vertical space is too tight to also stack
+        the button above the hand without overlapping the seats/piles — it
+        keeps its own fixed left-edge placement there instead, always
+        reachable one-handed regardless of hand scroll/fan position. -->
         <button
-          v-if="showUnoButton"
+          v-if="showUnoButton && isLandscapeMobile"
           type="button"
-          class="animate-pulse-glow rounded-full bg-uno-red px-6 py-3 text-lg font-extrabold text-white shadow-lg"
-          :class="
-            isLandscapeMobile
-              ? 'pointer-events-auto fixed left-3 top-1/2 z-40 -translate-y-1/2'
-              : 'absolute right-full top-1/2 z-10 mr-4 -translate-y-1/2'
-          "
+          class="pointer-events-auto fixed left-3 top-1/2 z-40 -translate-y-1/2 animate-pulse-glow rounded-full bg-uno-red px-6 py-3 text-lg font-extrabold text-white shadow-lg"
           @click="onCallUno"
         >
           UNO!
@@ -1472,6 +1468,15 @@ onBeforeUnmount(() => {
       >
         Press <kbd class="rounded border border-cyan-300/50 bg-cyan-950/60 px-1.5 py-0.5 font-mono">X</kbd> to jump in!
       </p>
+      <button
+        v-if="showUnoButton && !isLandscapeMobile"
+        type="button"
+        class="pointer-events-auto mb-1 animate-pulse-glow rounded-full bg-uno-red px-6 py-2.5 text-lg font-extrabold text-white shadow-lg"
+        @click="onCallUno"
+      >
+        UNO!
+      </button>
+
       <div class="pointer-events-auto mb-1 flex items-center gap-3">
         <span class="rounded-full bg-slate-950/70 px-2 py-0.5 text-xs text-slate-400 backdrop-blur">
           {{ myTurn && turnPauseActive ? 'Get ready…' : myTurn ? 'Your hand' : `Waiting for ${turnBannerText}` }} ({{ myHand.length }})
