@@ -61,6 +61,14 @@ npm run build
 
 Then upload the `dist/` folder (or connect the repo) to your host of choice. Remember to set the same `VITE_FIREBASE_*` environment variables on the host.
 
+**Important — SPA fallback routing:** this app uses client-side routing (`createWebHistory` in `src/router/index.js`), so a room link like `/room/K7QXM` isn't a real file on the server — only `index.html` is, and the router takes over from there once it loads. Typing a code on the homepage works everywhere regardless, since that's in-app navigation; but opening a shared room link directly (a fresh tab, a different device, hitting refresh) is a real page load, and needs the host configured to serve `index.html` for *any* path instead of 404ing. This repo's `firebase.json` does that for Firebase Hosting (a plain Hosting rewrite — free on the Spark plan, no Cloud Functions needed) via:
+
+```bash
+firebase deploy --only hosting
+```
+
+On another static host, set up the equivalent: Vercel does this automatically for most frameworks (or add a `vercel.json` rewrite if not); Netlify needs a `public/_redirects` file containing `/* /index.html 200`.
+
 ## Link previews / OG image
 
 Sharing any link to this app (the homepage or a room link) shows a themed preview card — the "UNO Online" wordmark and brand colors — via a single static image at `public/og-image.png`, referenced from `index.html`'s Open Graph/Twitter meta tags. It's pre-rendered by `scripts/og-image-svg.mjs` (an SVG template) through `scripts/generate-default-og.mjs`; regenerate it after touching the branding with:
