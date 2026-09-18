@@ -4,6 +4,3 @@ dist
 .env.local
 .DS_Store
 *.log
-functions/node_modules
-functions/index-template.html
-.firebase

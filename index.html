@@ -6,9 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UNO Online</title>
     <meta name="description" content="Real-time multiplayer UNO — create a room, share the code, and play with friends." />
-    <!-- Room-specific pages (functions/index.js) replace everything between
-    these two markers with a version carrying that room's invite code. -->
-    <!-- og:meta:start -->
+    <!-- Static site-wide preview (see scripts/og-image-svg.mjs / generate-default-og.mjs)
+    used for every page, room links included — no per-room invite code baked
+    in, since that would need a server-side render this app doesn't have. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="UNO Online" />
     <meta property="og:title" content="UNO Online" />
@@ -20,7 +20,6 @@
     <meta name="twitter:title" content="UNO Online" />
     <meta name="twitter:description" content="Real-time multiplayer UNO — create a room, share the code, and play with friends." />
     <meta name="twitter:image" content="/og-image.png" />
-    <!-- og:meta:end -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
