@@ -53,21 +53,13 @@ Open the printed local URL, enter a name, and create a room. Open it in another 
 
 ### 4. Deploy (optional)
 
-The app itself is a static Vite build, so it deploys anywhere static hosting is available — Firebase Hosting, Vercel, Netlify, etc.
+The app itself is a static Vite build, so it deploys anywhere static hosting is available. This repo is set up to deploy on **Vercel** (`vercel.json`) — connect the repo and set the `VITE_FIREBASE_*` environment variables in the Vercel project settings. Firestore itself (rooms, signaling) stays on Firebase regardless of where the static site is hosted; only Firestore's security rules need the Firebase CLI (`firebase deploy --only firestore:rules`, using `firebase.json`/`firestore.rules` in this repo) — Firebase Hosting isn't used.
 
 ```bash
 npm run build
 ```
 
-Then upload the `dist/` folder (or connect the repo) to your host of choice. Remember to set the same `VITE_FIREBASE_*` environment variables on the host.
-
-**Important — SPA fallback routing:** this app uses client-side routing (`createWebHistory` in `src/router/index.js`), so a room link like `/room/K7QXM` isn't a real file on the server — only `index.html` is, and the router takes over from there once it loads. Typing a code on the homepage works everywhere regardless, since that's in-app navigation; but opening a shared room link directly (a fresh tab, a different device, hitting refresh) is a real page load, and needs the host configured to serve `index.html` for *any* path instead of 404ing. This repo's `firebase.json` does that for Firebase Hosting (a plain Hosting rewrite — free on the Spark plan, no Cloud Functions needed) via:
-
-```bash
-firebase deploy --only hosting
-```
-
-On another static host, set up the equivalent: Vercel does this automatically for most frameworks (or add a `vercel.json` rewrite if not); Netlify needs a `public/_redirects` file containing `/* /index.html 200`.
+**Important — SPA fallback routing:** this app uses client-side routing (`createWebHistory` in `src/router/index.js`), so a room link like `/room/K7QXM` isn't a real file on the server — only `index.html` is, and the router takes over from there once it loads. Typing a code on the homepage works regardless, since that's in-app navigation; but opening a shared room link directly (a fresh tab, a different device, hitting refresh) is a real page load, and needs the host configured to serve `index.html` for *any* path instead of 404ing. `vercel.json`'s rewrite does that for Vercel. Deploying somewhere else instead needs the equivalent: Netlify wants a `public/_redirects` file containing `/* /index.html 200`; Firebase Hosting wants a Hosting `rewrites` entry (`{ "source": "**", "destination": "/index.html" }`) in `firebase.json`.
 
 ## Link previews / OG image
 
