@@ -555,6 +555,13 @@ async function onChooseColor(color) {
   await submitPlay(card.id, color, undefined, viaJumpIn)
 }
 
+// Backs out of a tentative wild-card pick (nothing's been submitted to the
+// host yet at this point) so a different card can be chosen instead.
+function onCancelColorChoice() {
+  pendingWildCard.value = null
+  pendingIsJumpIn.value = false
+}
+
 async function onChooseSwapTarget(targetUid) {
   unlockAudio()
   const card = pendingSwapCard.value
@@ -1626,7 +1633,12 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
-    <ColorPickerModal :show="!!pendingWildCard || startingColorChoiceIsMine || myRouletteChoice" @choose="onChooseColor" />
+    <ColorPickerModal
+      :show="!!pendingWildCard || startingColorChoiceIsMine || myRouletteChoice"
+      :cancelable="!!pendingWildCard"
+      @choose="onChooseColor"
+      @cancel="onCancelColorChoice"
+    />
 
     <RoundSummaryModal
       v-if="game.status === 'round-over' || game.status === 'game-over'"
