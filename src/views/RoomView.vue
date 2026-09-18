@@ -98,7 +98,12 @@ async function onLeave() {
   <div v-else-if="needsName" class="flex min-h-screen items-center justify-center px-4">
     <div class="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-6">
       <p class="mb-1 font-display text-lg font-bold text-slate-100">Join room {{ room.code }}</p>
-      <p class="mb-4 text-sm text-slate-400">{{ room.players.length }} player(s) already in.</p>
+      <p class="mb-4 text-sm text-slate-400">
+        {{ room.players.length }} player(s) already in.
+        <span v-if="room.status !== 'lobby'" class="block text-uno-yellow">
+          A round is already in progress — you'll watch until the next one is dealt.
+        </span>
+      </p>
       <input
         v-model="nameInput"
         maxlength="20"

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { MIN_PLAYERS } from '../lib/uno/constants.js'
 
 const props = defineProps({
@@ -10,6 +10,26 @@ const emit = defineEmits(['start', 'leave'])
 
 const isHost = computed(() => props.room.hostUid === props.uid)
 const canStart = computed(() => props.room.players.length >= MIN_PLAYERS)
+
+const linkCopied = ref(false)
+async function onShareRoom() {
+  const url = `${window.location.origin}/room/${props.room.code}`
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'UNO Online', text: `Join my UNO game — room ${props.room.code}`, url })
+      return
+    } catch {
+      // Cancelled or unsupported — fall through to copy.
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    linkCopied.value = true
+    setTimeout(() => (linkCopied.value = false), 2000)
+  } catch {
+    // Clipboard unavailable — nothing more we can do here.
+  }
+}
 </script>
 
 <template>
@@ -18,6 +38,14 @@ const canStart = computed(() => props.room.players.length >= MIN_PLAYERS)
       <p class="text-sm uppercase tracking-widest text-slate-500">Invite code</p>
       <p class="mt-1 font-display text-5xl font-extrabold tracking-[0.25em] text-uno-yellow">{{ room.code }}</p>
       <p class="mt-2 text-sm text-slate-400">Share this code — friends can join from the home screen.</p>
+      <button
+        type="button"
+        class="mt-3 inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-slate-100"
+        @click="onShareRoom"
+      >
+        {{ linkCopied ? '✅ Link copied!' : '🔗 Copy invite link' }}
+      </button>
+      <br />
       <span
         class="mt-3 inline-block rounded-full px-3 py-1 text-xs font-bold"
         :class="room.mode === 'no-mercy' ? 'bg-uno-red/20 text-uno-red' : 'bg-uno-yellow/20 text-uno-yellow'"

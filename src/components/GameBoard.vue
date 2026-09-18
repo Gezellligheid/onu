@@ -42,6 +42,14 @@ function flashError(err) {
 
 const myHand = computed(() => game.value.hands[uid.value] || [])
 
+// Someone who joined the room after this round was already dealt — they're
+// in `room.players` (and so already connected over P2P) but not in this
+// round's `game.hands`/`playerOrder`. They watch the live game and get
+// dealt in automatically once the host deals the next round (see
+// hostSession.js's startNextRound, which reseats off the room's current
+// player list).
+const isSpectator = computed(() => !!game.value && !game.value.hands[uid.value])
+
 // Display-only sort (color, then rank) so your hand stays organized as you
 // draw/play — the underlying array order (which drawnCardId relies on to
 // find "the card I just drew") is untouched.
@@ -646,6 +654,28 @@ async function onBackToLobby() {
 
 async function onLeave() {
   await roomStore.leave(uid.value)
+}
+
+// ---- Share/copy the room's invite URL — lets a mid-game spectator (or
+// anyone else) pull in more players without reading a code out loud. ----
+const linkCopied = ref(false)
+async function onShareRoom() {
+  const url = `${window.location.origin}/room/${room.value.code}`
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'UNO Online', text: `Join my UNO game — room ${room.value.code}`, url })
+      return
+    } catch {
+      // Cancelled or unsupported — fall through to copy.
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    linkCopied.value = true
+    setTimeout(() => (linkCopied.value = false), 2000)
+  } catch {
+    // Clipboard unavailable — nothing more we can do here.
+  }
 }
 
 // ---- Flying-card animations: a lightweight overlay of "cloned" cards that
@@ -1278,6 +1308,9 @@ onBeforeUnmount(() => {
         <span v-if="isNoMercy" class="ml-2 rounded-full bg-uno-red/20 px-2 py-0.5 text-[10px] font-bold text-uno-red">NO MERCY</span>
       </span>
       <div class="flex items-center gap-2">
+        <button type="button" class="rounded-md border border-white/10 px-2 py-1 hover:border-white/20" @click="onShareRoom">
+          {{ linkCopied ? 'Link copied!' : '🔗 Invite' }}
+        </button>
         <button
           type="button"
           class="rounded-md border border-white/10 px-2 py-1 hover:border-white/20"
@@ -1290,6 +1323,15 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </div>
+
+    <!-- Spectator banner: joined after this round was dealt — watching live,
+    will be seated automatically once the next round starts. -->
+    <p
+      v-if="isSpectator"
+      class="mb-2 rounded-lg bg-uno-yellow/10 px-3 py-2 text-center text-xs font-medium text-uno-yellow"
+    >
+      👀 You're watching this round — you'll be dealt in once the next one starts.
+    </p>
 
     <!-- Opponents: a plain row, no table underneath them. -->
     <div class="relative mb-2 flex items-start justify-center gap-4 sm:gap-8">
@@ -1470,8 +1512,13 @@ onBeforeUnmount(() => {
     center content above it down to nothing on a short landscape screen. -->
     <div :style="{ height: `${Math.max(0, handBoxHeight - handOffscreenPx) + 46}px` }"></div>
 
-    <!-- My hand: floats freely in front of everything, no boxed panel -->
-    <div class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3" :class="shakeHand ? 'animate-shake' : ''">
+    <!-- My hand: floats freely in front of everything, no boxed panel.
+    Hidden entirely for a spectator — there's no hand to show or play. -->
+    <div
+      v-if="!isSpectator"
+      class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex flex-col items-center pb-3"
+      :class="shakeHand ? 'animate-shake' : ''"
+    >
       <p
         v-if="jumpInHotkeyCard"
         class="pointer-events-none mb-1 animate-pulse-glow rounded-full bg-cyan-400/20 px-3 py-1 text-xs font-bold text-cyan-300 shadow"

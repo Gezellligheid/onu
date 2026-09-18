@@ -498,9 +498,13 @@ export function catchUno(state, catcherId, targetId) {
   return next
 }
 
-export function startNextRound(state) {
+// `players` defaults to the round's own roster, but the host passes the
+// room's *current* player list instead — anyone who joined mid-round (and so
+// sat out as a spectator, see GameBoard's isSpectator) gets dealt in here,
+// and anyone who left is dropped.
+export function startNextRound(state, players = state.players) {
   if (state.status !== 'round-over') throw new Error('Current round has not finished.')
-  return createRound(state.players, {
+  return createRound(players, {
     targetScore: state.targetScore,
     jumpInEnabled: state.jumpInEnabled,
     scores: state.scores,

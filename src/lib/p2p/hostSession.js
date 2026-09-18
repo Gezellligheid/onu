@@ -99,7 +99,10 @@ export class HostSession {
     } else if (actionName === 'startNextRound') {
       if (!this.game) throw new Error('Game has not started.')
       const engine = getEngine(this.game.mode)
-      this.game = engine.startNextRound(this.game)
+      // Reseat off the room's current roster, not the stale one the round
+      // started with — anyone who joined mid-round while spectating gets
+      // dealt in now, and anyone who left is dropped.
+      this.game = engine.startNextRound(this.game, this.players)
       this.status = 'playing'
     } else if (actionName === 'returnToLobby') {
       this.game = null

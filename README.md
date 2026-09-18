@@ -4,7 +4,9 @@ Real-time multiplayer UNO for you and your friends — built with Vue 3, Tailwin
 
 ## Features
 
-- **Invite-code multiplayer** — one player creates a room and gets a short code (e.g. `K7QXM`); everyone else joins by typing it in. No lobbies to browse, no accounts to create.
+- **Invite-code multiplayer** — one player creates a room and gets a short code (e.g. `K7QXM`); everyone else joins by typing it in, or with a shareable room link (see below). No lobbies to browse, no accounts to create.
+- **Join mid-game** — the invite code (and link) keep working after the game has started; a late joiner watches the round in progress and is automatically dealt into the next one, no need to wait out the whole match.
+- **Shareable room links** — a "Copy invite link" / share button on the lobby and in-game screens hands out `/room/CODE` directly (using the native share sheet on mobile where available), and sharing that link in Slack/Discord/iMessage/etc. shows a live-rendered preview with the room's invite code and game mode baked into the image (see [Link previews](#link-previews--og-image)).
 - **Firebase anonymous auth** — sign-in is just a display name, backed by Firebase Anonymous Authentication under the hood.
 - **Real-time sync** — game state lives in Firestore and syncs to every player instantly via `onSnapshot` listeners.
 - **Round table layout** — opponents are seated in an arc around the discard/draw piles, like sitting around a real table, with their hands shown as fanned card backs (so you always see at a glance how many cards everyone's holding).
@@ -51,13 +53,39 @@ Open the printed local URL, enter a name, and create a room. Open it in another 
 
 ### 4. Deploy (optional)
 
-The app is a static Vite build, so it deploys anywhere static hosting is available — Firebase Hosting, Vercel, Netlify, etc.
+The app itself is a static Vite build, so it deploys anywhere static hosting is available — Firebase Hosting, Vercel, Netlify, etc.
 
 ```bash
 npm run build
 ```
 
 Then upload the `dist/` folder (or connect the repo) to your host of choice. Remember to set the same `VITE_FIREBASE_*` environment variables on the host.
+
+**Note:** live-rendered room link previews (the invite code baked into the shared-link image — see [Link previews](#link-previews--og-image)) specifically require deploying to **Firebase Hosting with Cloud Functions**, since that's what renders them server-side. On any other static host, `/room/CODE` links still work fine for actually joining — they just fall back to the site's generic default preview image instead of one showing that room's code.
+
+## Link previews / OG image
+
+Sharing a room link (in Slack, Discord, iMessage, etc.) shows a live-rendered preview — the room's invite code and game mode, themed with the site's UNO-deck colors — instead of a generic card. This needs a small server-side piece since link-unfurling bots don't run JS, so a plain static `index.html` can't know which room a URL is for:
+
+- `firebase.json` rewrites `/room/:code` and `/room/:code/og-image.png` to two Cloud Functions (`functions/index.js`, 2nd-gen, Node 20) instead of the static SPA shell.
+- `renderRoom` looks up the room in Firestore, then serves the *same* `dist/index.html` every real visitor gets — just with the `<title>` and the Open Graph/Twitter meta tags (delimited by `<!-- og:meta:start/end -->` in `index.html`) swapped for a version carrying that room's code, mode, and player count. Vue mounts over it exactly as normal, so this changes nothing about the actual app experience.
+- `ogImage` renders a 1200×630 PNG (via `sharp`) from an SVG template (`functions/og-image.js`) showing the invite code in large type on the app's branded background.
+- Every other route still falls through to the static `dist/index.html` untouched.
+
+To deploy this part:
+
+```bash
+firebase use --add          # once, to point the Firebase CLI at your project
+firebase deploy --only hosting,functions
+```
+
+The Hosting `predeploy` hook (see `firebase.json`) runs `npm run build` and then `scripts/copy-index-template.mjs`, which copies the freshly built `dist/index.html` into `functions/` as `renderRoom`'s template (Firebase only uploads the `functions/` directory for a Functions deploy, so it can't reach into `dist/` at request time — this copy step is what keeps the two in sync). `functions/` has its own `package.json`; run `npm install` inside it once before deploying.
+
+The site's default preview image (used for the homepage, and as a fallback if a room lookup fails) is a static file at `public/og-image.png`, pre-rendered by the same SVG template. Regenerate it after touching the branding with:
+
+```bash
+npm run generate:og
+```
 
 ## How multiplayer works
 
@@ -144,5 +172,7 @@ src/
   stores/           Pinia stores (auth, room)
   components/       PlayingCard, CardFan, PlayerBadge, GameBoard, modals, WaitingRoom
   views/            HomeView (create/join), RoomView (lobby ⇄ game switch)
+functions/          Cloud Functions: renderRoom + ogImage serve room-specific link previews (see "Link previews / OG image")
+scripts/            og-image-svg.mjs (shared SVG template), generate-default-og.mjs, copy-index-template.mjs
 public/cards/       classic mode's UNO card face artwork (see "Look & feel" above)
 ```

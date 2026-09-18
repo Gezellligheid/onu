@@ -72,7 +72,12 @@ export async function joinRoom({ code, uid, name }) {
     const snap = await tx.get(ref)
     if (!snap.exists()) throw new Error('No room found with that invite code.')
     const room = snap.data()
-    if (room.status !== 'lobby') throw new Error('This game has already started.')
+    // Mid-game joins are allowed — a newcomer sits out as a spectator (see
+    // GameBoard's isSpectator) until the host deals the next round, which
+    // re-seats off the room's current player list. Only a fully finished
+    // match (status mirrors HostSession.status: lobby | playing | finished)
+    // turns away new joiners.
+    if (room.status === 'finished') throw new Error('This game has already finished.')
     const already = room.players.some((p) => p.uid === uid)
     if (already) {
       const players = room.players.map((p) => (p.uid === uid ? { ...p, name } : p))
