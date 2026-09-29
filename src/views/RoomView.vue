@@ -63,6 +63,10 @@ async function onStart() {
   }
 }
 
+async function onUpdateSettings(patch) {
+  roomStore.updateSettings(patch).catch(() => {})
+}
+
 async function onLeave() {
   await roomStore.leave(auth.uid)
   router.push({ name: 'home' })
@@ -122,12 +126,19 @@ async function onLeave() {
     </div>
   </div>
 
-  <WaitingRoom v-else-if="room.status === 'lobby'" :room="room" :uid="auth.uid" @start="onStart" @leave="onLeave" />
+  <WaitingRoom
+    v-else-if="room.status === 'lobby'"
+    :room="room"
+    :uid="auth.uid"
+    @start="onStart"
+    @leave="onLeave"
+    @update-settings="onUpdateSettings"
+  />
 
   <!--
     status can say 'playing' (mirrored to Firestore so joinRoom rejects
-    late joins) before the P2P layer has actually delivered a `game` —
-    notably right after a reload, before the resync broadcast arrives.
+    late joins) before the sync session has actually delivered a `game` —
+    notably right after a reload, before the first snapshot arrives.
     Never mount GameBoard against a null game.
   -->
   <div v-else-if="!room.game" class="flex min-h-screen items-center justify-center text-slate-500">

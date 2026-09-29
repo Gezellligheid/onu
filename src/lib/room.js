@@ -2,6 +2,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
@@ -141,6 +142,17 @@ export async function ensureDiscordRoom({ code, uid, name }) {
     tx.update(ref, { players: [...room.players, { uid, name, joinedAt: Date.now() }] })
   })
   return upper
+}
+
+// Host-only (enforced in the UI — see WaitingRoom.vue's isHost gate) lobby
+// settings edit, for rooms that skipped the create-time settings form (e.g.
+// Discord's auto-bound rooms, which always start Classic) or whose host
+// just changed their mind before starting.
+export async function updateRoomSettings({ code, mode, targetScore, mercyLimit, jumpInEnabled }) {
+  requireDb()
+  const patch = { mode, targetScore, jumpInEnabled }
+  if (mode === 'no-mercy') patch.mercyLimit = mercyLimit
+  await updateDoc(roomRef(code), patch)
 }
 
 export function subscribeRoom(code, callback, onError) {
