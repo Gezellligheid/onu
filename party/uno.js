@@ -1,28 +1,27 @@
-// Authoritative UNO engine, running once per room on PartyKit instead of in
-// any single player's browser — see src/lib/sync/partySession.js for the
-// client. Firebase/Firestore still owns the lobby (create/join/leave,
-// settings, roster) since that's low-volume; this only ever needs to know
-// the room's ruleset/roster, which the host forwards over the socket
-// whenever the lobby doc changes (see PartySession#updateConfig), and the
-// live `status`/`game`, which nothing outside this room needs to persist.
+// Authoritative UNO engine, running once per room on Cloudflare (via
+// partyserver, deployed with Wrangler) instead of any single player's
+// browser — see src/lib/sync/partySession.js for the client. Firebase/
+// Firestore still owns the lobby (create/join/leave, settings, roster)
+// since that's low-volume; this only ever needs the room's ruleset/roster,
+// which the host forwards over the socket whenever the lobby doc changes
+// (see PartySession#updateConfig), and the live `status`/`game`, which
+// nothing outside this room needs to persist.
+import { Server, routePartykitRequest } from 'partyserver'
 import { PHASE_ACTION_NAMES } from '../src/lib/sync/protocol.js'
 import { getEngine } from '../src/lib/uno/modes.js'
 import { MIN_PLAYERS } from '../src/lib/uno/constants.js'
 
-export default class UnoServer {
-  constructor(room) {
-    this.room = room
-    this.status = 'lobby'
-    this.game = null
-    this.config = {}
-    this.players = []
-  }
+export class UnoServer extends Server {
+  status = 'lobby'
+  game = null
+  config = {}
+  players = []
 
   // Runs once when the room's Durable Object (re)starts — including after
   // it's been idle and evicted — so a room's live state survives every
   // player disconnecting, not just one player's tab closing.
   async onStart() {
-    const saved = await this.room.storage.get('state')
+    const saved = await this.ctx.storage.get('state')
     if (saved) {
       this.status = saved.status
       this.game = saved.game
@@ -32,10 +31,10 @@ export default class UnoServer {
   }
 
   onConnect(connection) {
-    this._send(connection, { type: 'state', status: this.status, game: this.game })
+    connection.send(JSON.stringify({ type: 'state', status: this.status, game: this.game }))
   }
 
-  async onMessage(raw, sender) {
+  async onMessage(sender, raw) {
     let msg
     try {
       msg = JSON.parse(raw)
@@ -58,14 +57,14 @@ export default class UnoServer {
     } catch (e) {
       result = { ok: false, message: e.message }
     }
-    this._send(sender, { v: 1, type: 'action-result', requestId: msg.requestId, ...result })
+    sender.send(JSON.stringify({ v: 1, type: 'action-result', requestId: msg.requestId, ...result }))
     if (result.ok) {
       await this._persist()
-      this.room.broadcast(JSON.stringify({ type: 'state', status: this.status, game: this.game }))
+      this.broadcast(JSON.stringify({ type: 'state', status: this.status, game: this.game }))
     }
   }
 
-  // ---- engine dispatch (ported from the old HostSession) ----
+  // ---- engine dispatch (unchanged from the Firestore-transport version) ----
 
   _applyAction(actionName, args) {
     if (PHASE_ACTION_NAMES.includes(actionName)) {
@@ -105,15 +104,17 @@ export default class UnoServer {
   }
 
   _persist() {
-    return this.room.storage.put('state', {
+    return this.ctx.storage.put('state', {
       status: this.status,
       game: this.game,
       config: this.config,
       players: this.players,
     })
   }
+}
 
-  _send(connection, obj) {
-    connection.send(JSON.stringify(obj))
-  }
+export default {
+  async fetch(request, env) {
+    return (await routePartykitRequest(request, env)) || new Response('Not found', { status: 404 })
+  },
 }
