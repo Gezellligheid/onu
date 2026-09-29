@@ -3,12 +3,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Casual, friends-only game rooms. Any signed-in (anonymous) user can
-    // read/join a room if they know its invite code. Game moves are validated
-    // client-side by the UNO engine (src/lib/uno/engine.js) before being
-    // written here — these rules only gate "must be signed in" and "only the
-    // host may create/delete a room". See README "Security model" for the
-    // tradeoffs of this approach vs. a Cloud Functions backend.
+    // Casual, friends-only game lobbies (create/join/leave, settings,
+    // roster). Any signed-in (anonymous) user can read/join a room if they
+    // know its invite code. The live game itself runs on PartyKit
+    // (party/uno.js) — this doc only ever sees a mirrored `status` from the
+    // host (see room.js#connectSession) so a late joinRoom() can still tell
+    // a finished game apart from a live one.
     match /rooms/{code} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
@@ -16,17 +16,6 @@ service cloud.firestore {
       allow update: if request.auth != null;
       allow delete: if request.auth != null
                     && resource.data.hostUid == request.auth.uid;
-
-      // Peer -> host move requests (src/lib/sync/peerSession.js). A peer
-      // creates one doc per action and deletes it once the host's result
-      // arrives; the host applies the action and merges the result back in.
-      // Same permissive, client-validated model as the room doc itself.
-      match /actions/{requestId} {
-        allow read, delete: if request.auth != null;
-        allow create: if request.auth != null
-                      && request.resource.data.uid == request.auth.uid;
-        allow update: if request.auth != null;
-      }
     }
   }
 }
