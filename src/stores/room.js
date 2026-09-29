@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { watchEffect } from 'vue'
 import * as roomLib from '../lib/room.js'
-import { GAME_ACTION_NAMES } from '../lib/p2p/protocol.js'
+import { GAME_ACTION_NAMES } from '../lib/sync/protocol.js'
 import { useAuthStore } from './auth.js'
 
 const gameActionMethods = Object.fromEntries(
@@ -17,7 +17,7 @@ export const useRoomStore = defineStore('room', {
   state: () => ({
     code: null,
     lobbyDoc: null, // raw Firestore room doc: code/hostUid/status/players/mode/...
-    liveGame: null, // { status, game } sourced from the P2P session
+    liveGame: null, // { status, game } sourced from the host/peer sync session
     connectionStatus: 'idle', // idle | connecting | connected | host-disconnected | connect-failed
     unsubscribeLobby: null,
     stopSessionWatch: null,
@@ -27,8 +27,8 @@ export const useRoomStore = defineStore('room', {
   getters: {
     // Merged view the UI reads. `status` can come from Firestore (the host
     // mirrors it there so joinRoom's "already started" check still works)
-    // before `game` has arrived over the P2P channel — e.g. right after a
-    // reload, before the resync broadcast lands. RoomView guards on `game`
+    // before `game` has arrived via the sync session — e.g. right after a
+    // reload, before the first snapshot lands. RoomView guards on `game`
     // itself, not just `status`, before ever mounting GameBoard.
     room: (state) =>
       state.lobbyDoc && {
@@ -51,6 +51,13 @@ export const useRoomStore = defineStore('room', {
       this.watch(cleanCode)
       return cleanCode
     },
+    // Discord Activities: bind straight to the shared activity instance
+    // instead of a typed/shared invite code — see roomLib.ensureDiscordRoom.
+    async autoJoinDiscord({ code, uid, name }) {
+      const finalCode = await roomLib.ensureDiscordRoom({ code, uid, name })
+      this.watch(finalCode)
+      return finalCode
+    },
     watch(code) {
       this.stopWatching()
       this.code = code.toUpperCase()
@@ -61,7 +68,6 @@ export const useRoomStore = defineStore('room', {
           this.lobbyDoc = doc
           if (doc) {
             roomLib.syncSessionConfig(doc)
-            roomLib.syncSessionPeers(doc.players)
           }
         },
         (err) => {
@@ -93,7 +99,6 @@ export const useRoomStore = defineStore('room', {
         // Firestore change, which might never come before startGame.
         if (isHost) {
           roomLib.syncSessionConfig(this.lobbyDoc)
-          roomLib.syncSessionPeers(this.lobbyDoc.players)
         }
       })
     },

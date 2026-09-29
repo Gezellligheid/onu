@@ -14,15 +14,14 @@ export const GAME_ACTION_NAMES = [
 
 // Phase transitions aren't plain engine calls (different signatures, or no
 // engine involvement at all for returnToLobby) but still flow through the
-// same host-authoritative dispatch/broadcast path.
+// same host-authoritative dispatch path.
 export const PHASE_ACTION_NAMES = ['startGame', 'startNextRound', 'returnToLobby']
 
 export const ALL_ACTION_NAMES = [...GAME_ACTION_NAMES, ...PHASE_ACTION_NAMES]
 
 export const REQUEST_TIMEOUT_MS = 8000
 
-// Data channel message shapes:
-//   peer -> host:  { v: 1, type: 'action', requestId, action, args }
-//   host -> peer:  { v: 1, type: 'action-result', requestId, ok: true }
-//   host -> peer:  { v: 1, type: 'action-result', requestId, ok: false, message }
-//   host -> peers: { v: 1, type: 'state', status, game }
+// Firestore doc shapes (see hostSession.js / peerSession.js):
+//   rooms/{code}                    { status, game, hostHeartbeat, ... lobby fields }
+//   rooms/{code}/actions/{reqId}     peer -> host: { uid, action, args, createdAt }
+//                                    host -> peer: same doc, merged with { result: { ok, message? } }

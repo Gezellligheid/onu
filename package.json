@@ -10,6 +10,7 @@
     "generate:og": "node scripts/generate-default-og.mjs"
   },
   "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
     "firebase": "^11.0.2",
     "pinia": "^2.2.6",
     "vue": "^3.5.13",
