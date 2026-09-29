@@ -2,6 +2,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
@@ -9,8 +10,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
 import { DEFAULT_TARGET_SCORE } from './uno/constants.js'
-import { HostSession } from './sync/hostSession.js'
-import { PeerSession } from './sync/peerSession.js'
+import { PartySession } from './sync/partySession.js'
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I to avoid ambiguity
 
@@ -73,7 +73,8 @@ export async function joinRoom({ code, uid, name }) {
     // Mid-game joins are allowed — a newcomer sits out as a spectator (see
     // GameBoard's isSpectator) until the host deals the next round, which
     // re-seats off the room's current player list. Only a fully finished
-    // match (status mirrors HostSession.status: lobby | playing | finished)
+    // match (status mirrors the PartyKit room's status: lobby | playing |
+    // finished, forwarded by the host — see PartySession#updateConfig)
     // turns away new joiners.
     if (room.status === 'finished') throw new Error('This game has already finished.')
     const already = room.players.some((p) => p.uid === uid)
@@ -143,6 +144,17 @@ export async function ensureDiscordRoom({ code, uid, name }) {
   return upper
 }
 
+// Host-only (enforced in the UI — see WaitingRoom.vue's isHost gate) lobby
+// settings edit, for rooms that skipped the create-time settings form (e.g.
+// Discord's auto-bound rooms, which always start Classic) or whose host
+// just changed their mind before starting.
+export async function updateRoomSettings({ code, mode, targetScore, mercyLimit, jumpInEnabled }) {
+  requireDb()
+  const patch = { mode, targetScore, jumpInEnabled }
+  if (mode === 'no-mercy') patch.mercyLimit = mercyLimit
+  await updateDoc(roomRef(code), patch)
+}
+
 export function subscribeRoom(code, callback, onError) {
   requireDb()
   return onSnapshot(
@@ -153,24 +165,31 @@ export function subscribeRoom(code, callback, onError) {
 }
 
 // ---- Game session lifecycle ----
-// The host runs the authoritative engine in memory and mirrors `status`/
-// `game` onto this same room doc; peers read it via subscribeRoom above and
-// submit their moves through rooms/{code}/actions. See
-// src/lib/sync/{hostSession,peerSession}.js for the transport.
+// The engine is authoritative on PartyKit (party/uno.js), not in any
+// player's browser — see src/lib/sync/partySession.js for the transport.
+// Firestore only ever sees `status`, mirrored by the host below, so a late
+// joiner's "already finished" check (joinRoom above) still works without
+// PartyKit needing to touch Firestore at all.
 
 let session = null
 
 export function connectSession({ code, uid, isHost, onGameState, onConnectionStatus }) {
   requireDb()
   disconnectSession()
-  if (isHost) {
-    // HostSession mirrors status/game onto the room doc itself; the host is
-    // always "connected" to its own in-memory session.
-    session = new HostSession({ code, hostUid: uid, onStateChange: onGameState })
-    onConnectionStatus('connected')
-  } else {
-    session = new PeerSession({ code, uid, onStateChange: onGameState, onConnectionStatus })
-  }
+  let lastMirroredStatus = null
+  session = new PartySession({
+    code,
+    uid,
+    isHost,
+    onStateChange: (status, game) => {
+      onGameState(status, game)
+      if (isHost && status !== lastMirroredStatus) {
+        lastMirroredStatus = status
+        updateDoc(roomRef(code), { status }).catch(() => {})
+      }
+    },
+    onConnectionStatus,
+  })
 }
 
 export function disconnectSession() {
@@ -179,7 +198,7 @@ export function disconnectSession() {
 }
 
 export function syncSessionConfig(lobbyDoc) {
-  if (session instanceof HostSession) session.updateConfig(lobbyDoc)
+  if (session instanceof PartySession) session.updateConfig(lobbyDoc)
 }
 
 function dispatch(action, args) {

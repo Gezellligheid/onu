@@ -118,6 +118,9 @@ export const useRoomStore = defineStore('room', {
       if (this.code) await roomLib.leaveRoom({ code: this.code, uid })
       this.stopWatching()
     },
+    async updateSettings(patch) {
+      await roomLib.updateRoomSettings({ code: this.code, ...patch })
+    },
     async startGame(hostUid) {
       await roomLib.startGame({ hostUid })
     },
