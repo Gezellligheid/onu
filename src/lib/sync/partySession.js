@@ -1,12 +1,17 @@
 // One session type for everyone — the engine is authoritative on the
-// PartyKit server (party/uno.js) now, not in any player's browser, so there's
-// no more host/peer distinction to maintain. Only the room's designated host
-// (see WaitingRoom.vue's isHost gate) forwards ruleset/roster updates; the
-// server keeps running the room regardless of who's actually connected.
+// Cloudflare-hosted server (party/uno.js, via partyserver) now, not in any
+// player's browser, so there's no more host/peer distinction to maintain.
+// Only the room's designated host (see WaitingRoom.vue's isHost gate)
+// forwards ruleset/roster updates; the server keeps running the room
+// regardless of who's actually connected.
 import PartySocket from 'partysocket'
 import { REQUEST_TIMEOUT_MS } from './protocol.js'
 
-const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST || 'localhost:1999'
+const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST || 'localhost:8787'
+// Kebab-case of the "UnoServer" Durable Object binding name in
+// wrangler.jsonc — that's how partyserver's routePartykitRequest maps a
+// URL to the right class.
+const PARTY_NAME = 'uno-server'
 
 const CONNECT_TIMEOUT_MS = 15000
 // PartySocket already retries the WebSocket itself with backoff — this is
@@ -24,7 +29,7 @@ export class PartySession {
     this.destroyed = false
 
     this.onConnectionStatus('connecting')
-    this.socket = new PartySocket({ host: PARTYKIT_HOST, room: code })
+    this.socket = new PartySocket({ host: PARTYKIT_HOST, party: PARTY_NAME, room: code })
 
     this.socket.addEventListener('open', () => {
       this.everConnected = true
