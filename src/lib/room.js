@@ -2,7 +2,6 @@ import {
   doc,
   getDoc,
   setDoc,
-  updateDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
@@ -10,9 +9,8 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase.js'
 import { DEFAULT_TARGET_SCORE } from './uno/constants.js'
-import { HostSession } from './p2p/hostSession.js'
-import { PeerSession } from './p2p/peerSession.js'
-import { clearSignal } from './p2p/signaling.js'
+import { HostSession } from './sync/hostSession.js'
+import { PeerSession } from './sync/peerSession.js'
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I to avoid ambiguity
 
@@ -105,7 +103,44 @@ export async function leaveRoom({ code, uid }) {
     if (room.hostUid === uid) patch.hostUid = players[0].uid
     tx.update(ref, patch)
   })
-  clearSignal(code.toUpperCase(), uid)
+}
+
+// Discord Activities: every participant launched into the same voice-channel
+// activity instance shares one Discord `instance_id` (see src/discord.js),
+// so it doubles as the room's invite code — no code to type or share. First
+// participant in creates the room; everyone after joins it. A `finished`
+// room is reset instead of reused, since relaunching the activity in the
+// same channel is the closest thing Discord users have to "play again."
+export async function ensureDiscordRoom({ code, uid, name }) {
+  requireDb()
+  const upper = code.toUpperCase()
+  const ref = roomRef(upper)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists() || snap.data().status === 'finished') {
+      tx.set(ref, {
+        code: upper,
+        hostUid: uid,
+        status: 'lobby',
+        createdAt: serverTimestamp(),
+        targetScore: DEFAULT_TARGET_SCORE,
+        mode: 'classic',
+        jumpInEnabled: false,
+        players: [{ uid, name, joinedAt: Date.now() }],
+        game: null,
+      })
+      return
+    }
+    const room = snap.data()
+    const already = room.players.some((p) => p.uid === uid)
+    if (already) {
+      const players = room.players.map((p) => (p.uid === uid ? { ...p, name } : p))
+      tx.update(ref, { players })
+      return
+    }
+    tx.update(ref, { players: [...room.players, { uid, name, joinedAt: Date.now() }] })
+  })
+  return upper
 }
 
 export function subscribeRoom(code, callback, onError) {
@@ -117,10 +152,11 @@ export function subscribeRoom(code, callback, onError) {
   )
 }
 
-// ---- P2P session lifecycle ----
-// Lobby metadata (above) stays on Firestore; the live game itself flows
-// entirely over a WebRTC data channel once a session is connected. See
-// src/lib/p2p/{hostSession,peerSession}.js for the transport.
+// ---- Game session lifecycle ----
+// The host runs the authoritative engine in memory and mirrors `status`/
+// `game` onto this same room doc; peers read it via subscribeRoom above and
+// submit their moves through rooms/{code}/actions. See
+// src/lib/sync/{hostSession,peerSession}.js for the transport.
 
 let session = null
 
@@ -128,23 +164,9 @@ export function connectSession({ code, uid, isHost, onGameState, onConnectionSta
   requireDb()
   disconnectSession()
   if (isHost) {
-    // The live `game` never touches Firestore, but `status` is lobby
-    // metadata (it gates joinRoom's "already started" check and lets a
-    // fresh subscriber see the right phase before the P2P layer catches
-    // up), so the host mirrors just that one field on each phase change —
-    // not on every move, since status stays 'playing' for the whole round.
-    let lastMirroredStatus = null
-    session = new HostSession({
-      code,
-      hostUid: uid,
-      onStateChange: (status, game) => {
-        onGameState(status, game)
-        if (status !== lastMirroredStatus) {
-          lastMirroredStatus = status
-          updateDoc(roomRef(code), { status }).catch(() => {})
-        }
-      },
-    })
+    // HostSession mirrors status/game onto the room doc itself; the host is
+    // always "connected" to its own in-memory session.
+    session = new HostSession({ code, hostUid: uid, onStateChange: onGameState })
     onConnectionStatus('connected')
   } else {
     session = new PeerSession({ code, uid, onStateChange: onGameState, onConnectionStatus })
@@ -154,10 +176,6 @@ export function connectSession({ code, uid, isHost, onGameState, onConnectionSta
 export function disconnectSession() {
   if (session) session.destroy()
   session = null
-}
-
-export function syncSessionPeers(players) {
-  if (session instanceof HostSession) session.syncPeers(players)
 }
 
 export function syncSessionConfig(lobbyDoc) {

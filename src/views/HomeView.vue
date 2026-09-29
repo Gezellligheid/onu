@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth.js'
 import { useRoomStore } from '../stores/room.js'
+import { isEmbedded, discordSdk } from '../discord.js'
 import { DEFAULT_TARGET_SCORE as CLASSIC_DEFAULT_SCORE } from '../lib/uno/constants.js'
 import {
   DEFAULT_TARGET_SCORE as NO_MERCY_DEFAULT_SCORE,
@@ -24,6 +25,11 @@ const mercyLimit = ref(DEFAULT_MERCY_LIMIT) // No Mercy only: hand size that kno
 const jumpInEnabled = ref(false) // House rule, either mode: play an exact-match card out of turn
 const loading = ref(false)
 const error = ref('')
+
+// Inside Discord, everyone launched into the same voice-channel activity
+// shares one instance — bind straight to it instead of showing the
+// create/join form (see roomLib.ensureDiscordRoom).
+const embedded = isEmbedded()
 
 const CLASSIC_SCORE_OPTIONS = [200, 300, 500]
 const scoreOptions = computed(() => (gameMode.value === 'no-mercy' ? NO_MERCY_SCORE_OPTIONS : CLASSIC_SCORE_OPTIONS))
@@ -47,6 +53,11 @@ async function submit() {
   loading.value = true
   try {
     const user = await auth.signIn(trimmedName)
+    if (embedded) {
+      const code = await room.autoJoinDiscord({ code: discordSdk.instanceId, uid: user.uid, name: trimmedName })
+      router.push({ name: 'room', params: { code } })
+      return
+    }
     if (mode.value === 'create') {
       if (gameMode.value === 'no-mercy') clampMercyLimit()
       const code = await room.create({
@@ -96,7 +107,7 @@ async function submit() {
           class="mb-5 w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-slate-100 outline-none ring-uno-yellow/60 placeholder:text-slate-500 focus:ring-2"
         />
 
-        <div class="mb-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-900/60 p-1">
+        <div v-if="!embedded" class="mb-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-900/60 p-1">
           <button
             type="button"
             class="rounded-md py-2 text-sm font-semibold transition"
@@ -115,7 +126,7 @@ async function submit() {
           </button>
         </div>
 
-        <div v-if="mode === 'create'" class="mb-5">
+        <div v-if="!embedded && mode === 'create'" class="mb-5">
           <label class="mb-1 block text-sm font-medium text-slate-300">Game mode</label>
           <div class="grid grid-cols-2 gap-2">
             <button
@@ -147,7 +158,7 @@ async function submit() {
           </div>
         </div>
 
-        <div v-if="mode === 'create'" class="mb-5">
+        <div v-if="!embedded && mode === 'create'" class="mb-5">
           <label class="mb-1 block text-sm font-medium text-slate-300">Play to</label>
           <div class="grid grid-cols-3 gap-2">
             <button
@@ -167,7 +178,7 @@ async function submit() {
           </div>
         </div>
 
-        <div v-if="mode === 'create'" class="mb-5">
+        <div v-if="!embedded && mode === 'create'" class="mb-5">
           <button
             type="button"
             class="flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left transition"
@@ -192,7 +203,7 @@ async function submit() {
           </button>
         </div>
 
-        <div v-if="mode === 'create' && gameMode === 'no-mercy'" class="mb-5">
+        <div v-if="!embedded && mode === 'create' && gameMode === 'no-mercy'" class="mb-5">
           <label class="mb-1 block text-sm font-medium text-slate-300">Mercy limit</label>
           <input
             v-model.number="mercyLimit"
@@ -207,7 +218,7 @@ async function submit() {
           </p>
         </div>
 
-        <div v-if="mode === 'join'" class="mb-5">
+        <div v-if="!embedded && mode === 'join'" class="mb-5">
           <label class="mb-1 block text-sm font-medium text-slate-300">Invite code</label>
           <input
             v-model="joinCode"
@@ -225,12 +236,16 @@ async function submit() {
           class="w-full rounded-lg bg-gradient-to-r from-uno-red via-uno-yellow to-uno-blue py-3 font-display text-lg font-bold text-white shadow-lg transition active:scale-[0.99] disabled:opacity-50"
           @click="submit"
         >
-          {{ loading ? 'Please wait…' : mode === 'create' ? 'Create Room' : 'Join Room' }}
+          {{ loading ? 'Please wait…' : embedded ? 'Join Game' : mode === 'create' ? 'Create Room' : 'Join Room' }}
         </button>
       </div>
 
       <p class="mt-6 text-center text-xs text-slate-500">
-        Signed in anonymously via Firebase — no password needed. Just share your invite code with friends.
+        {{
+          embedded
+            ? "Everyone in this activity is dropped into the same game automatically."
+            : 'Signed in anonymously via Firebase — no password needed. Just share your invite code with friends.'
+        }}
       </p>
     </div>
   </div>

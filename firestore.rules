@@ -17,11 +17,15 @@ service cloud.firestore {
       allow delete: if request.auth != null
                     && resource.data.hostUid == request.auth.uid;
 
-      // One-time WebRTC handshake signaling (SDP offer/answer + trickle ICE
-      // candidates) for the P2P game-sync data channel. Same permissive
-      // model as the room doc itself — cleared once a channel opens.
-      match /signals/{peerUid} {
-        allow read, write: if request.auth != null;
+      // Peer -> host move requests (src/lib/sync/peerSession.js). A peer
+      // creates one doc per action and deletes it once the host's result
+      // arrives; the host applies the action and merges the result back in.
+      // Same permissive, client-validated model as the room doc itself.
+      match /actions/{requestId} {
+        allow read, delete: if request.auth != null;
+        allow create: if request.auth != null
+                      && request.resource.data.uid == request.auth.uid;
+        allow update: if request.auth != null;
       }
     }
   }
