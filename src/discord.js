@@ -31,6 +31,9 @@ const URL_MAPPINGS = [
   { prefix: '/firebase-token', target: 'securetoken.googleapis.com' },
   { prefix: '/fonts', target: 'fonts.googleapis.com' },
   { prefix: '/fonts-static', target: 'fonts.gstatic.com' },
+  // Live game sync (src/lib/sync/partySession.js) — patches the WebSocket
+  // connection too, patchUrlMappings' default config covers that.
+  ...(import.meta.env.VITE_PARTYKIT_HOST ? [{ prefix: '/party', target: import.meta.env.VITE_PARTYKIT_HOST }] : []),
 ]
 
 let readyPromise = null
